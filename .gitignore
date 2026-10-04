@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.planning/
+*.gif
+*.mp4
+*.webm
+.omaconvert-*/
+# Local agent tooling
+.agents/
+.claude/
+.codex/
+.hermes/
+.mcp.json
+AGENTS.md

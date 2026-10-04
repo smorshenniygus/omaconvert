@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.smorshenniygus.omaconvert",
+  "name": "OmaConvert",
+  "version": "1.0.0",
+  "author": "smorshenniygus",
+  "license": "MIT",
+  "description": "Make videos and images fit upload limits: GIF, MP4, WebM, JPG, PNG or WebP under a target size, picked from ready recipes or typed as 'gif 10mb', with trim and before/after previews.",
+  "kinds": ["panel"],
+  "keepLoaded": true,
+  "entryPoints": {"panel": "OmaConvert.qml"}
+}

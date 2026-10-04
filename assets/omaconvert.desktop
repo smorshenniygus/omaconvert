@@ -1,0 +1,18 @@
+[Desktop Entry]
+# Template: Exec, TryExec and MimeType are filled in with the plugin's own
+# bin/omaconvert-open when "Show in Open With" is switched on in the window.
+Version=1.0
+Type=Application
+Name=OmaConvert
+GenericName=Media Converter
+GenericName[ru]=Конвертер видео и изображений
+Comment=Convert videos and images with a target file size
+Comment[ru]=Конвертация видео и изображений с ограничением размера
+Exec=omaconvert-open %f
+TryExec=omaconvert-open
+MimeType=
+Icon=video-x-generic
+Terminal=false
+StartupNotify=false
+Categories=AudioVideo;Video;
+Keywords=ffmpeg;gif;mp4;webm;convert;video;конвертер;видео;image;png;jpg;webp;изображение;
