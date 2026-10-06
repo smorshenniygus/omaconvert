@@ -314,13 +314,14 @@ Item {
         onExited: (code) => { root.clipboardStatus = code === 0 ? "Copied" : "Clipboard unavailable; check wl-copy."; stdinEnabled = true }
         // qmllint enable signal-handler-parameters
     }
-    // Native desktop picker via xdg portal. QML FileDialog inside a
+    // Native desktop picker via xdg portal (bin/omaconvert-pick keeps the
+    // window's fullscreen state across the dialog). QML FileDialog inside a
     // layer-shell PanelWindow segfaults Qt (QQuickFileDialog::onShow ->
     // QQuickPopup::setPopupType); the external picker keeps the crash
     // out of the long-running shell process entirely.
     Process {
         id: filePicker
-        command: ["omarchy-file-select", "--title", "Choose a video or image",
+        command: [Model.localPath(Qt.resolvedUrl("bin/omaconvert-pick")), "--title", "Choose a video or image",
                   "--extensions", Model.pickerExtensions(service.capabilities)]
         stdout: StdioCollector {
             waitForEnd: true
@@ -339,7 +340,7 @@ Item {
 
     Process {
         id: folderPicker
-        command: ["omarchy-file-select", "--title", "Choose where to save the result", "--directory"]
+        command: [Model.localPath(Qt.resolvedUrl("bin/omaconvert-pick")), "--title", "Choose where to save the result", "--directory"]
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: {

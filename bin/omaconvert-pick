@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""File or folder picker for the OmaConvert window: omarchy-file-select with
+the same arguments, output and exit code, plus keeping the window's
+fullscreen state.
+
+Omarchy hands fullscreen to any newly focused window
+(misc:on_focus_under_fullscreen = 1), so the portal dialog takes it over
+and the panel comes back merely maximized, re-laying out twice. The state
+of the panel is recorded before the picker and restored after it. Without
+Hyprland this is just omarchy-file-select.
+"""
+import json
+import shutil
+import subprocess
+import sys
+
+
+def hyprctl(*args):
+    if not shutil.which("hyprctl"):
+        return None
+    try:
+        return subprocess.run(["hyprctl", *args], stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def active_window():
+    done = hyprctl("activewindow", "-j")
+    try:
+        return json.loads(done.stdout) if done and done.returncode == 0 else None
+    except ValueError:
+        return None
+
+
+def dispatch(lua, legacy):
+    """Hyprland 0.55+ takes Lua dispatchers; older ones the classic syntax."""
+    done = hyprctl("dispatch", lua)
+    if done is None or done.returncode != 0 or (done.stdout or "").strip().lower().startswith("error"):
+        hyprctl("dispatch", *legacy)
+
+
+def state(window):
+    return int(window.get("fullscreen") or 0), int(window.get("fullscreenClient") or 0)
+
+
+def main():
+    before = active_window()
+    picker = subprocess.run(["omarchy-file-select", *sys.argv[1:]], stdout=subprocess.PIPE, text=True)
+    sys.stdout.write(picker.stdout)
+    sys.stdout.flush()
+    ours = before and before.get("title") == "OmaConvert" and before.get("address")
+    if ours and state(before) != (0, 0):
+        address = before["address"]
+        dispatch(f'hl.dsp.focus({{ window = "address:{address}" }})', ["focuswindow", f"address:{address}"])
+        after = active_window()
+        if after and after.get("address") == address and state(after) != state(before):
+            internal, client = state(before)
+            dispatch(f"hl.dsp.window.fullscreen_state({{ internal = {internal}, client = {client} }})",
+                     ["fullscreenstate", str(internal), str(client)])
+    return picker.returncode
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except FileNotFoundError:
+        print("omaconvert-pick: omarchy-file-select is not installed", file=sys.stderr)
+        sys.exit(2)
