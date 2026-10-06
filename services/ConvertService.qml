@@ -19,6 +19,10 @@ Item {
     property string phase: ""
     property real progress: 0
     property var candidate: null
+    // Every size the search measured for this job, oldest first (at most 6).
+    property var candidates: []
+    // Date.now() when the current conversion started; 0 when idle.
+    property real startedAt: 0
     property int currentPass: 0
     property bool terminalEvent: false
     property bool dependenciesReady: true
@@ -91,6 +95,8 @@ Item {
         if (busy || !metadata || !dependenciesReady) return
         result = null
         candidate = null
+        candidates = []
+        startedAt = Date.now()
         progress = 0
         currentPass = 0
         phase = mode === "target" ? "Finding the best quality…" : "Converting…"
@@ -121,7 +127,7 @@ Item {
             if (event.version) backendVersion = String(event.version)
             notice = event.gifsicle === false ? "Tip: install gifsicle to make GIFs a little smaller." : ""
         } else if (event.event === "warning") notice = event.message || ""
-        else if (event.event === "candidate") candidate = event
+        else if (event.event === "candidate") { candidate = event; candidates = candidates.concat([event]).slice(-6) }
         else if (event.event === "complete") {
             job.terminalEvent = true
             terminalEvent = true

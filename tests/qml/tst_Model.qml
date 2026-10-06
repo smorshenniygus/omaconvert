@@ -211,4 +211,20 @@ TestCase {
         compare(Model.arguments("/v.mp4", "png", "quick", "50", "MB", "balanced", "balanced", 0, 0, 8, "", 0).indexOf("--sequence-fps"), -1)
         compare(Model.arguments("/v.mp4", "png", "quick", "50", "MB", "balanced", "balanced", 0, 0, 8, "", null).indexOf("--sequence"), -1)
     }
+    function test_sizesAndOutputNames() {
+        compare(Model.sizeLabel(200000), "200 KB")
+        compare(Model.sizeLabel(10000000), "10 MB")
+        compare(Model.sizeLabel(1500000), "1.5 MB")
+        compare(Model.limitBytes("10", "MB"), 10000000)
+        compare(Model.limitBytes("0.5", "KB"), 500)
+        compare(Model.limitBytes("abc", "MB"), 0)
+        compare(Model.compactSize(22298255), "22.3 MB")
+        compare(Model.compactSize(137850), "138 KB")
+        var gif = { format: "GIF", mode: "target", size: "10", unit: "MB" }
+        compare(Model.outputName("/v/sunset-at-sea.mp4", gif), "sunset-at-sea-10mb.gif")
+        compare(Model.outputName("/v/photo.png", { format: "JPG", mode: "target", size: "200", unit: "KB" }), "photo-200kb.jpg")
+        compare(Model.outputName("/v/a.mov", { format: "MP4", mode: "target", size: "1.5", unit: "MB" }), "a-1-5mb.mp4")
+        compare(Model.outputName("/v/a.mov", { format: "WebM", mode: "quick", size: "10", unit: "MB" }), "a.webm")
+        compare(Model.outputName("/v/a.mov", { format: Model.SEQUENCE, mode: "quick" }), "a-frames/")
+    }
 }

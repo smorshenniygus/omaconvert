@@ -83,6 +83,47 @@ function megabytes(bytes) {
     return n > 0 && n < 1000000 ? (n / 1000).toFixed(2) + " KB" : (n / 1000000).toFixed(2) + " MB"
 }
 
+// A target size the way it was typed: "200 KB", "10 MB", "1.5 MB" (mirrors
+// lib/optimizer.size_text, which also names the output file).
+function sizeLabel(bytes) {
+    var n = Number(bytes || 0)
+    var units = [["GB", 1e9], ["MB", 1e6], ["KB", 1e3]]
+    for (var i = 0; i < units.length; i++)
+        if (n >= units[i][1] || units[i][0] === "KB") return Number((n / units[i][1]).toPrecision(6)) + " " + units[i][0]
+}
+// Bytes of a size field, 0 when the text is not a size.
+function limitBytes(size, unit) {
+    return validSize(size) ? Math.floor(Number(size) * (unit === "KB" ? 1e3 : 1e6)) : 0
+}
+// Short size for big numbers: "22.3 MB", "138 KB".
+function compactSize(bytes) {
+    var n = Number(bytes || 0)
+    if (n >= 1e9) return (n / 1e9).toFixed(1) + " GB"
+    if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e8 ? 0 : 1) + " MB"
+    return Math.max(0, Math.round(n / 1e3)) + " KB"
+}
+// File (or folder) the backend will create for these fields; a taken name
+// later gets a number. Mirrors lib/backend._default_output.
+function outputName(path, fields) {
+    var file = name(path || "")
+    var dot = file.lastIndexOf(".")
+    var stem = dot > 0 ? file.slice(0, dot) : file
+    if (!fields || !fields.format) return ""
+    if (fields.format === SEQUENCE) return stem + "-frames/"
+    var ext = String(fields.format).toLowerCase()
+    var bytes = fields.mode === "target" ? limitBytes(fields.size, fields.unit) : 0
+    if (!bytes) return stem + "." + ext
+    return stem + "-" + sizeLabel(bytes).replace(" ", "").replace(".", "-").toLowerCase() + "." + ext
+}
+
+// Common upload limits offered next to the size field.
+var SIZE_PRESETS = [
+    { label: "discord 10", size: 10, unit: "MB" },
+    { label: "x gif 15", size: 15, unit: "MB" },
+    { label: "email 25", size: 25, unit: "MB" },
+    { label: "web 500 kb", size: 500, unit: "KB" }
+]
+
 // Offline fallbacks until the backend answers --capabilities; mirror
 // lib/formats.py (checked by tests/test_formats.py).
 var FALLBACK_IMAGE = ["PNG", "JPG", "WebP", "BMP", "TIFF", "GIF"]

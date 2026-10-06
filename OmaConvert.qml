@@ -45,11 +45,21 @@ Item {
     // Backend files on disk are newer/older than this loaded QML: the shell
     // kept a cached interface after `omarchy plugin update`.
     readonly property bool staleInterface: service.backendVersion !== "" && service.backendVersion !== root.appVersion
+    // Palette: theme roles only, so every Omarchy theme dresses the panel.
     readonly property color fg: root.menuTheme.text
-    readonly property color dim: Qt.darker(root.fg, 1.4)
+    readonly property color bg: root.menuTheme.background
     readonly property color accent: Color.accent
     readonly property color urgent: Color.urgent
+    readonly property color dim: root.alpha(root.fg, 0.55)
+    readonly property color faint: root.alpha(root.fg, 0.32)
+    readonly property color line: root.alpha(root.fg, 0.16)
+    readonly property color surface: root.alpha(root.fg, 0.04)
+    readonly property color sage: Style.selectedStateColor(root.fg, root.accent, root.urgent)
+    readonly property color mist: Style.hoverStateColor(root.fg, root.accent, root.urgent)
+    readonly property color focusColor: Style.focusStateColor(root.fg, root.accent, root.urgent)
     readonly property string fontFamily: root.fonts.menuFamily
+    function alpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
+    function px(k) { return Math.round(root.fonts.body * k) }
     // Form state (persisted through Settings aliases below).
     property string formatValue: ""
     property int modeIndex: 0
@@ -82,6 +92,19 @@ Item {
     // Format that Enter would run: the fields with "+" open, else the highlighted recipe.
     readonly property string activeFormat: root.advanced ? root.formatValue
         : (root.selectedRow < root.matched.rows.length ? root.matched.rows[root.selectedRow].fields.format : "")
+    // What Enter would make: the fields with settings open, else the highlighted recipe.
+    readonly property var activeFields: root.advanced ? root.currentFields()
+        : (root.selectedRow < root.matched.rows.length ? root.matched.rows[root.selectedRow].fields : null)
+    readonly property real activeLimit: root.activeFields && root.activeFields.mode === "target" && root.activeFields.format !== Model.SEQUENCE
+        ? Model.limitBytes(root.activeFields.size, root.activeFields.unit) : 0
+    // The running job, for the converting screen.
+    property real jobLimitBytes: 0
+    property string jobCommand: ""
+    property real clock: Date.now()
+    readonly property bool idleWithFile: service.metadata !== null && !service.result && !service.busy
+    readonly property string screen: service.result && !service.busy ? "result"
+        : (service.busy && service.operation === "convert" ? "converting"
+        : (root.idleWithFile ? (root.advanced ? "settings" : "recipes") : "empty"))
     readonly property bool canRunSelected: root.readyToConvert && root.selectedRow < root.matched.rows.length && root.matched.rows[root.selectedRow].problem === ""
 
     function open(payloadJson) {
@@ -204,6 +227,8 @@ Item {
     function startConversion() {
         if (!canConvert) return
         var command = Model.commandText(root.currentFields(), root.inputKind)
+        root.jobCommand = command
+        root.jobLimitBytes = root.sizeShown ? Model.limitBytes(sizeInput.text, root.unitText) : 0
         if (root.inputKind === "image") prefs.lastImageCommand = command
         else prefs.lastVideoCommand = command
         prefs.sync()
@@ -215,6 +240,19 @@ Item {
                         Model.PREFERENCES[root.preferenceIndex] || "balanced",
                         useTrim ? trimBar.startTime : 0, useTrim ? trimBar.endTime : 0, root.outputFolder,
                         sequence ? root.sequenceFps : null)
+    }
+    function convertAnother() {
+        service.result = null
+        service.metadata = null
+        service.inputPath = ""
+        service.phase = ""
+        root.clipboardStatus = ""
+        preview.clearAll()
+        choose.forceActiveFocus()
+    }
+    function openResultFolder() {
+        var path = service.result ? service.result.path : ""
+        Qt.openUrlExternally(Model.fileUri(path.substring(0, path.lastIndexOf("/")) || "/"))
     }
     function copy(value, uri) {
         if (clipboard.running) return
@@ -316,25 +354,21 @@ Item {
         // qmllint enable signal-handler-parameters
     }
 
-    // Small building blocks so every row reads like a first-party panel.
-    component FieldLabel: Text {
-        readonly property var menuTheme: Color.menu
+    // ── Building blocks (terminal idiom: square, 1 px lines, mono) ─────────
+    component SectionLabel: Text {
         readonly property var fontTokens: Style.font
         textFormat: Text.PlainText
-        color: Qt.darker(menuTheme.text, 1.4)
+        color: root.faint
         font.family: fontTokens.menuFamily
-        font.pixelSize: fontTokens.bodySmall
+        font.pixelSize: Math.round(fontTokens.body * 0.833)
         font.bold: true
-        Layout.preferredWidth: Style.space(104)
-        Layout.alignment: Qt.AlignVCenter
-        elide: Text.ElideRight
+        font.letterSpacing: 2
     }
     component Hint: Text {
-        readonly property var menuTheme: Color.menu
         readonly property var fontTokens: Style.font
         textFormat: Text.PlainText
         Layout.fillWidth: true
-        color: Qt.darker(menuTheme.text, 1.4)
+        color: root.dim
         font.family: fontTokens.menuFamily
         font.pixelSize: fontTokens.caption
         wrapMode: Text.WordWrap
@@ -349,6 +383,146 @@ Item {
         fontFamily: fontTokens.menuFamily
         opacity: enabled ? 1 : 0.4
     }
+    // Small bordered text button: "change", "×", "esc cancel".
+    component TextButton: Rectangle {
+        id: tb
+        property string key: ""
+        property string label: ""
+        signal clicked()
+        implicitWidth: tbRow.implicitWidth + 18
+        implicitHeight: tbRow.implicitHeight + 8
+        color: tbMouse.containsMouse ? root.alpha(root.fg, 0.06) : "transparent"
+        border.width: 1
+        border.color: tb.activeFocus ? root.focusColor : root.alpha(root.fg, 0.3)
+        opacity: enabled ? 1 : 0.4
+        activeFocusOnTab: enabled
+        Accessible.role: Accessible.Button
+        Accessible.name: tb.label
+        Keys.onReturnPressed: tb.clicked()
+        Keys.onEnterPressed: tb.clicked()
+        Keys.onSpacePressed: tb.clicked()
+        Row {
+            id: tbRow
+            anchors.centerIn: parent
+            spacing: 6
+            Text {
+                visible: tb.key !== ""
+                textFormat: Text.PlainText
+                text: tb.key
+                color: root.focusColor
+                font.family: root.fontFamily
+                font.pixelSize: root.px(0.917)
+                font.bold: true
+            }
+            Text {
+                textFormat: Text.PlainText
+                text: tb.label
+                color: root.fg
+                font.family: root.fontFamily
+                font.pixelSize: root.px(0.917)
+            }
+        }
+        MouseArea {
+            id: tbMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: tb.clicked()
+        }
+    }
+    // One setting: label column on the left, controls on the right.
+    component FieldRow: Rectangle {
+        id: fieldRow
+        property string label: ""
+        default property alias controls: fieldControls.data
+        Layout.fillWidth: true
+        implicitHeight: fieldLayout.implicitHeight + 14
+        color: "transparent"
+        opacity: enabled ? 1 : 0.38
+        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.line }
+        RowLayout {
+            id: fieldLayout
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: 14
+            anchors.rightMargin: 14
+            spacing: 12
+            SectionLabel {
+                Layout.preferredWidth: 84
+                Layout.alignment: Qt.AlignTop
+                Layout.topMargin: 5
+                text: fieldRow.label
+                font.letterSpacing: 1.5
+            }
+            ColumnLayout {
+                id: fieldControls
+                Layout.fillWidth: true
+                // Without a filling child the column would shrink to its
+                // content and float to the middle of the row.
+                Layout.maximumWidth: Number.POSITIVE_INFINITY
+                spacing: 5
+            }
+        }
+    }
+    // Result action: icon, label, key on the right; the first one is primary.
+    component ActionRow: Rectangle {
+        id: act
+        property string glyph: ""
+        property string label: ""
+        property string key: ""
+        property bool primary: false
+        signal triggered()
+        Layout.fillWidth: true
+        implicitHeight: actRow.implicitHeight + 20
+        color: act.primary ? root.alpha(root.focusColor, 0.08) : (actMouse.containsMouse ? root.surface : "transparent")
+        activeFocusOnTab: true
+        Accessible.role: Accessible.Button
+        Accessible.name: act.label
+        Keys.onReturnPressed: act.triggered()
+        Keys.onEnterPressed: act.triggered()
+        Keys.onSpacePressed: act.triggered()
+        Rectangle { visible: act.primary || act.activeFocus; width: 2; height: parent.height; color: root.focusColor }
+        Rectangle { visible: !act.primary; anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.line }
+        RowLayout {
+            id: actRow
+            anchors.fill: parent
+            anchors.leftMargin: 14
+            anchors.rightMargin: 14
+            spacing: 12
+            Text {
+                text: act.glyph
+                color: act.primary ? root.focusColor : root.mist
+                font.family: root.fonts.family
+                font.pixelSize: root.px(1.167)
+            }
+            Text {
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                text: act.label
+                color: root.fg
+                font.family: root.fontFamily
+                font.pixelSize: root.px(1)
+                font.bold: act.primary
+                elide: Text.ElideRight
+            }
+            Text {
+                textFormat: Text.PlainText
+                text: act.key
+                color: act.primary ? root.focusColor : root.faint
+                font.family: root.fontFamily
+                font.pixelSize: root.px(0.917)
+                font.bold: true
+            }
+        }
+        MouseArea {
+            id: actMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: act.triggered()
+        }
+    }
 
     // Quickshell creates FloatingWindow through its runtime platform factory.
     // qmllint disable uncreatable-type
@@ -359,9 +533,9 @@ Item {
         // Quickshell windows default to visible: keep hidden until open().
         // Otherwise keepLoaded instantiation pops the window at every boot.
         visible: false
-        color: root.menuTheme.background
+        color: root.bg
         implicitWidth: 560
-        implicitHeight: 720
+        implicitHeight: 880
         minimumSize: Qt.size(460, 520)
 
         onVisibleChanged: {
@@ -374,8 +548,16 @@ Item {
             anchors.fill: parent
             focus: true
             // Kept for tests/tools that read the usable content width.
-            readonly property real availableWidth: width - 2 * root.spacing.panelPadding
-            Keys.onEscapePressed: event => { if (service.busy) service.cancel(); else root.dismiss(); event.accepted = true }
+            readonly property real availableWidth: width - 40
+            // Own background: identical to the window color, and grabs
+            // (screenshots, tests) see the real panel instead of alpha.
+            Rectangle { anchors.fill: parent; color: root.bg }
+            Keys.onEscapePressed: event => {
+                if (service.busy) service.cancel()
+                else if (root.screen === "settings") root.toggleAdvanced()
+                else root.dismiss()
+                event.accepted = true
+            }
 
             Shortcut {
                 sequences: ["Ctrl+Return", "Ctrl+Enter"]
@@ -383,73 +565,101 @@ Item {
                 context: Qt.WindowShortcut
                 onActivated: root.advanced ? root.startConversion() : root.runRecipe(root.selectedRow)
             }
-
-            Flickable {
-                id: flick
-                anchors.fill: parent
-                anchors.margins: root.spacing.panelPadding
-                anchors.rightMargin: root.spacing.panelPadding - Style.space(6)
-                contentWidth: width
-                contentHeight: content.implicitHeight
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
-                interactive: contentHeight > height
-                ScrollBar.vertical: ScrollBar {
-                    policy: flick.contentHeight > flick.height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
-                    contentItem: Rectangle {
-                        implicitWidth: Style.space(3)
-                        radius: width / 2
-                        color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.25)
+            Shortcut {
+                sequence: "Ctrl+,"
+                enabled: root.idleWithFile
+                context: Qt.WindowShortcut
+                onActivated: root.toggleAdvanced()
+            }
+            // Alt+1… runs a recipe: plain digits belong to the command line.
+            Repeater {
+                model: 9
+                delegate: Item {
+                    id: recipeKey
+                    required property int index
+                    Shortcut {
+                        sequence: "Alt+" + (recipeKey.index + 1)
+                        enabled: root.screen === "recipes" && recipeKey.index < root.matched.rows.length
+                        context: Qt.WindowShortcut
+                        onActivated: root.runRecipe(recipeKey.index)
                     }
-                    background: Item {}
                 }
+            }
+            Shortcut { sequences: ["Return", "Enter"]; enabled: root.screen === "result"; context: Qt.WindowShortcut; onActivated: Qt.openUrlExternally(Model.fileUri(service.result.path)) }
+            Shortcut { sequence: "O"; enabled: root.screen === "result"; context: Qt.WindowShortcut; onActivated: root.openResultFolder() }
+            Shortcut { sequence: "C"; enabled: root.screen === "result"; context: Qt.WindowShortcut; onActivated: root.copy(Model.fileUri(service.result.path) + "\r\n", true) }
+            Shortcut { sequence: "P"; enabled: root.screen === "result"; context: Qt.WindowShortcut; onActivated: root.copy(service.result.path, false) }
+            Shortcut { sequence: "N"; enabled: root.screen === "result"; context: Qt.WindowShortcut; onActivated: root.convertAnother() }
+            Timer {
+                interval: 1000
+                repeat: true
+                running: service.busy
+                onTriggered: root.clock = Date.now()
+            }
 
-                ColumnLayout {
-                    id: content
-                    x: Math.max(0, (flick.width - Style.space(6) - width) / 2)
-                    width: Math.min(flick.width - Style.space(6), root.maxContentWidth)
-                    spacing: Style.space(12)
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 0
 
-                    // ── Header ────────────────────────────────────────────
-                    Item {
-                        Layout.fillWidth: true
-                        implicitHeight: Math.max(hero.implicitHeight, closeButton.implicitHeight)
-                        Ui.PanelHero {
-                            id: hero
-                            anchors.left: parent.left
-                            anchors.right: versionLabel.left
-                            anchors.rightMargin: Style.space(12)
-                            anchors.verticalCenter: parent.verticalCenter
-                            title: "OmaConvert"
-                            meta: service.busy ? "Converting" : (service.result ? "Ready to share" : "Videos and images made ready to share")
-                            detail: service.metadata && !service.result ? (root.inputKind === "image" ? "Image" : "Video") : ""
-                            foreground: root.fg
-                            fontFamily: root.fontFamily
-                            iconComponent: Component {
-                                Text {
-                                    text: "󰕧"
-                                    color: Color.accent
-                                    font.family: root.fonts.family
-                                    font.pixelSize: root.fonts.display
-                                }
-                            }
+                // ── Title bar ─────────────────────────────────────────────
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: titleRow.implicitHeight + 20
+                    color: "transparent"
+                    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.line }
+                    RowLayout {
+                        id: titleRow
+                        anchors.fill: parent
+                        anchors.leftMargin: 16
+                        anchors.rightMargin: 12
+                        spacing: 10
+                        Text {
+                            text: "󰕧"
+                            color: root.sage
+                            font.family: root.fonts.family
+                            font.pixelSize: root.px(1.333)
                         }
                         Text {
-                            id: versionLabel
-                            anchors.right: closeButton.left
-                            anchors.rightMargin: Style.space(8)
-                            anchors.verticalCenter: parent.verticalCenter
+                            textFormat: Text.PlainText
+                            text: "omaconvert"
+                            color: root.fg
+                            font.family: root.fontFamily
+                            font.pixelSize: root.px(1)
+                            font.bold: true
+                        }
+                        Text {
                             textFormat: Text.PlainText
                             text: "v" + root.appVersion
-                            color: root.dim
+                            color: root.faint
                             font.family: root.fontFamily
-                            font.pixelSize: root.fonts.caption
+                            font.pixelSize: root.px(1)
                             Accessible.name: "OmaConvert version " + root.appVersion
                         }
+                        Item { Layout.fillWidth: true }
+                        Rectangle {
+                            readonly property string label: root.screen === "converting" ? "CONVERTING"
+                                : (root.screen === "result" ? "READY"
+                                : (service.metadata ? (root.inputKind === "image" ? "IMAGE" : "VIDEO") : ""))
+                            readonly property color tone: root.screen === "converting" ? root.focusColor : root.mist
+                            visible: label !== ""
+                            implicitWidth: stateText.implicitWidth + 16
+                            implicitHeight: stateText.implicitHeight + 4
+                            color: root.alpha(tone, 0.13)
+                            border.width: 1
+                            border.color: tone
+                            Text {
+                                id: stateText
+                                anchors.centerIn: parent
+                                textFormat: Text.PlainText
+                                text: parent.label
+                                color: parent.tone
+                                font.family: root.fontFamily
+                                font.pixelSize: root.px(0.833)
+                                font.bold: true
+                                font.letterSpacing: 1.5
+                            }
+                        }
                         Ui.PanelActionButton {
-                            id: closeButton
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
                             iconText: "󰅖"
                             tooltipText: "Close  ·  Esc"
                             foreground: root.fg
@@ -458,695 +668,1115 @@ Item {
                             onClicked: root.dismiss()
                         }
                     }
-                    Ui.PanelSeparator { Layout.fillWidth: true; foreground: root.fg }
+                }
 
-                    // ── Source ────────────────────────────────────────────
-                    Ui.PanelSectionHeader {
-                        visible: !service.result
-                        text: "SOURCE"
-                        foreground: root.fg
-                        fontFamily: root.fontFamily
+                Flickable {
+                    id: flick
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    contentWidth: width
+                    contentHeight: content.implicitHeight + 36
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    interactive: contentHeight > height
+                    ScrollBar.vertical: ScrollBar {
+                        policy: flick.contentHeight > flick.height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+                        contentItem: Rectangle {
+                            implicitWidth: 3
+                            color: root.alpha(root.fg, 0.25)
+                        }
+                        background: Item {}
                     }
-                    Ui.BorderSurface {
-                        id: choose
-                        visible: !service.result
-                        Layout.fillWidth: true
-                        implicitHeight: Style.space(service.inputPath ? 52 : 84)
-                        radius: Style.cornerRadius
-                        enabled: !service.busy && !root.pickerBusy
-                        activeFocusOnTab: true
-                        Accessible.role: Accessible.Button
-                        Accessible.name: chooseLabel.text
-                        readonly property bool dragging: dropArea.containsDrag
-                        readonly property bool hot: chooseMouse.containsMouse || dragging
-                        color: dragging ? Style.selectedFillFor(root.fg, root.accent)
-                             : chooseMouse.pressed ? Style.pressedFillFor(root.fg, root.accent)
-                             : Style.controlFill(activeFocus, hot, root.fg, root.accent)
-                        borderSpec: Border.controlSpec(dragging ? "selected" : (activeFocus ? "focus" : (hot ? "hover-cursor" : "normal")), root.fg, root.accent)
-                        opacity: enabled || root.pickerBusy ? 1 : 0.5
-                        Behavior on color { ColorAnimation { duration: 120 } }
-                        Keys.onReturnPressed: root.chooseVideo()
-                        Keys.onEnterPressed: root.chooseVideo()
-                        Keys.onSpacePressed: root.chooseVideo()
 
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: Style.space(14)
-                            anchors.rightMargin: Style.space(14)
-                            spacing: Style.space(12)
-                            Text {
-                                text: root.pickerBusy ? "󰔟" : (service.inputPath ? (root.inputKind === "image" ? "󰋩" : "󰈫") : "󰇚")
-                                color: service.inputPath ? root.accent : root.dim
-                                font.family: root.fonts.family
-                                font.pixelSize: root.fonts.iconLarge
+                    ColumnLayout {
+                        id: content
+                        x: Math.max(20, (flick.width - width) / 2)
+                        y: 18
+                        width: Math.min(flick.width - 40, root.maxContentWidth)
+                        spacing: 16
+
+                        // ── Source ────────────────────────────────────────
+                        Item {
+                            id: choose
+                            visible: !service.result && root.screen !== "converting"
+                            Layout.fillWidth: true
+                            implicitHeight: service.inputPath ? sourceText.implicitHeight : emptyColumn.implicitHeight
+                            enabled: !service.busy && !root.pickerBusy
+                            activeFocusOnTab: true
+                            Accessible.role: Accessible.Button
+                            Accessible.name: service.inputPath ? "Change source file" : "Choose a video or image"
+                            readonly property bool dragging: dropArea.containsDrag
+                            readonly property bool hot: chooseMouse.containsMouse || dragging
+                            Keys.onReturnPressed: root.chooseVideo()
+                            Keys.onEnterPressed: root.chooseVideo()
+                            Keys.onSpacePressed: root.chooseVideo()
+
+                            // Loaded: the file as a title, its facts underneath.
+                            RowLayout {
+                                id: sourceText
+                                visible: service.inputPath !== ""
+                                width: parent.width
+                                spacing: 12
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 4
+                                    SectionLabel { text: "SOURCE" }
+                                    Text {
+                                        textFormat: Text.PlainText
+                                        Layout.fillWidth: true
+                                        text: choose.dragging ? "Drop to open" : Model.name(service.inputPath)
+                                        color: choose.activeFocus ? root.focusColor : root.fg
+                                        font.family: root.fontFamily
+                                        font.pixelSize: root.px(1.5)
+                                        font.bold: true
+                                        elide: Text.ElideMiddle
+                                    }
+                                    Text {
+                                        textFormat: Text.PlainText
+                                        Layout.fillWidth: true
+                                        text: service.metadata !== null ? Model.mediaDescription(service.metadata) : "Reading media…"
+                                        color: root.dim
+                                        font.family: root.fontFamily
+                                        font.pixelSize: root.px(0.917)
+                                        elide: Text.ElideRight
+                                    }
+                                }
+                                Text {
+                                    Layout.alignment: Qt.AlignBottom
+                                    visible: !root.pickerBusy
+                                    textFormat: Text.PlainText
+                                    text: "change"
+                                    color: choose.hot ? root.fg : root.faint
+                                    font.family: root.fontFamily
+                                    font.pixelSize: root.px(0.917)
+                                }
+                            }
+                            // Empty: one big drop target.
+                            ColumnLayout {
+                                id: emptyColumn
+                                visible: service.inputPath === ""
+                                width: parent.width
+                                spacing: 8
+                                SectionLabel { text: "SOURCE" }
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    implicitHeight: 150
+                                    color: choose.dragging ? root.alpha(root.sage, 0.18)
+                                         : (choose.hot ? root.surface : "transparent")
+                                    border.width: 1
+                                    border.color: choose.activeFocus || choose.dragging ? root.focusColor : root.alpha(root.fg, 0.3)
+                                    ColumnLayout {
+                                        anchors.centerIn: parent
+                                        spacing: 8
+                                        Text {
+                                            Layout.alignment: Qt.AlignHCenter
+                                            text: root.pickerBusy ? "󰔟" : "󰇚"
+                                            color: choose.activeFocus ? root.focusColor : root.sage
+                                            font.family: root.fonts.family
+                                            font.pixelSize: root.px(2.333)
+                                        }
+                                        Text {
+                                            Layout.alignment: Qt.AlignHCenter
+                                            textFormat: Text.PlainText
+                                            text: root.pickerBusy ? "Choosing file…" : (choose.dragging ? "Drop to open" : "Choose a video or image")
+                                            color: root.fg
+                                            font.family: root.fontFamily
+                                            font.pixelSize: root.px(1.167)
+                                            font.bold: true
+                                        }
+                                        Text {
+                                            Layout.alignment: Qt.AlignHCenter
+                                            textFormat: Text.PlainText
+                                            text: "⏎ browse  ·  or drop a file here"
+                                            color: root.faint
+                                            font.family: root.fontFamily
+                                            font.pixelSize: root.px(0.917)
+                                        }
+                                    }
+                                }
+                            }
+                            MouseArea {
+                                id: chooseMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: { choose.forceActiveFocus(); root.chooseVideo() }
+                            }
+                            DropArea {
+                                id: dropArea
+                                anchors.fill: parent
+                                onDropped: drop => {
+                                    if (!service.busy && drop.urls.length === 1) {
+                                        var path = Model.localPath(drop.urls[0])
+                                        if (path) { service.selectFile(path); drop.acceptProposedAction() }
+                                    }
+                                }
+                            }
+                        }
+                        // Opt-in desktop entry; offered only before a file is chosen.
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            visible: !service.inputPath && !service.result && service.openWith !== null
+                            spacing: 4
+                            ActionButton {
+                                bordered: false
+                                iconText: service.openWith && service.openWith.enabled ? "󰄲" : "󰄱"
+                                text: "Show in Open With and app search"
+                                selected: !!(service.openWith && service.openWith.enabled)
+                                Accessible.name: "Show OmaConvert in Open With and app search"
+                                onClicked: service.setOpenWith(!(service.openWith && service.openWith.enabled))
+                            }
+                            Hint {
+                                visible: text !== ""
+                                text: service.openWithError !== "" ? service.openWithError
+                                    : "Adds OmaConvert to your file manager's Open With menu for videos and images. Default apps are not changed."
+                                color: service.openWithError !== "" ? root.urgent : root.dim
+                            }
+                        }
+
+                        // ── Preview + trim ────────────────────────────────
+                        PreviewImage {
+                            id: sourcePreview
+                            Layout.fillWidth: true
+                            visible: root.idleWithFile && (preview.sourceUrl !== "" || preview.sourceLoading)
+                            title: "Preview"
+                            showHeader: false
+                            boxHeight: root.advanced ? 150 : Math.min(292, Math.round(width * 0.5625))
+                            imageSource: preview.sourceUrl
+                            loading: preview.sourceLoading
+                            overlayText: root.trimShown ? Model.timeText(trimBar.playhead) : ""
+                            overlayDot: root.urgent
+                            badgeText: service.metadata ? (root.inputKind === "image" ? Model.dimensionsText(service.metadata.width, service.metadata.height)
+                                : Math.min(service.metadata.width, service.metadata.height) + "p" + (Model.isHdr(service.metadata) ? "  ·  HDR" : "")) : ""
+                            foreground: root.fg
+                            background: root.bg
+                            fontFamily: root.fontFamily
+                            fontSize: root.fonts.body
+                            Behavior on boxHeight { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                        }
+                        TrimBar {
+                            id: trimBar
+                            Layout.fillWidth: true
+                            visible: root.trimShown && root.idleWithFile
+                            duration: (service.metadata && service.metadata.duration) || 0
+                            trackColor: root.surface
+                            fillColor: root.sage
+                            knobColor: root.fg
+                            knobBorderColor: root.bg
+                            lineColor: root.line
+                            playheadColor: root.focusColor
+                            labelColor: root.mist
+                            textColor: root.fg
+                            urgentColor: root.urgent
+                            fontFamily: root.fontFamily
+                            fontSize: root.fonts.body
+                            controlHeight: root.spacing.controlHeight
+                            onScrubRequested: (position) => {
+                                if (service.inputPath) preview.requestSource(service.inputPath, position)
+                            }
+                        }
+                        SizeBudget {
+                            Layout.fillWidth: true
+                            visible: root.idleWithFile && root.activeLimit > 0 && (service.metadata.bytes || 0) > 0
+                            fromBytes: (service.metadata && service.metadata.bytes) || 0
+                            limitBytes: root.activeLimit
+                            foreground: root.fg
+                            fillColor: root.sage
+                            limitColor: root.focusColor
+                            fontFamily: root.fontFamily
+                            fontSize: root.fonts.body
+                        }
+
+                        // ── Command line, recipes, all settings ──────────
+                        // Recipes for this file, a line that understands
+                        // "gif 30mb", and every field behind the settings
+                        // button. Fields and the line stay in sync.
+                        ColumnLayout {
+                            id: output
+                            Layout.fillWidth: true
+                            visible: root.idleWithFile
+                            spacing: 8
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                Ui.TextField {
+                                    id: commandInput
+                                    Layout.fillWidth: true
+                                    foreground: root.fg
+                                    accent: root.accent
+                                    horizontalPadding: root.spacing.controlPaddingX + root.px(1.5)
+                                    font.family: root.fontFamily
+                                    font.pixelSize: root.px(1.167)
+                                    font.bold: true
+                                    selectByMouse: true
+                                    placeholderText: root.inputKind === "image" ? "webp  ·  png 500kb  ·  jpg" : "gif 30mb  ·  mp4 quick  ·  png frames 10fps"
+                                    Accessible.name: "What to make, for example gif 30mb"
+                                    onTextEdited: root.commandEdited()
+                                    Keys.onUpPressed: event => { root.moveSelection(-1); event.accepted = true }
+                                    Keys.onDownPressed: event => { root.moveSelection(1); event.accepted = true }
+                                    Keys.onReturnPressed: event => root.commandReturn(event)
+                                    Keys.onEnterPressed: event => root.commandReturn(event)
+                                    Keys.onEscapePressed: event => {
+                                        if (text === "") { event.accepted = false; return }
+                                        text = ""
+                                        root.commandEdited()
+                                        event.accepted = true
+                                    }
+                                    Text {
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: root.spacing.controlPaddingX
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: "❯"
+                                        color: commandInput.activeFocus ? root.focusColor : root.faint
+                                        font.family: root.fontFamily
+                                        font.pixelSize: root.px(1.167)
+                                        font.bold: true
+                                    }
+                                }
+                                // Settings: full height of the line, square.
+                                Rectangle {
+                                    id: settingsButton
+                                    Layout.preferredWidth: commandInput.height
+                                    Layout.preferredHeight: commandInput.height
+                                    color: root.advanced ? root.alpha(root.focusColor, 0.2)
+                                         : (settingsMouse.containsMouse ? root.alpha(root.fg, 0.08) : root.surface)
+                                    border.width: 1
+                                    border.color: root.advanced || settingsButton.activeFocus ? root.focusColor : root.alpha(root.fg, 0.3)
+                                    activeFocusOnTab: true
+                                    Accessible.role: Accessible.Button
+                                    Accessible.name: root.advanced ? "Back to recipes" : "All settings"
+                                    Keys.onReturnPressed: root.toggleAdvanced()
+                                    Keys.onEnterPressed: root.toggleAdvanced()
+                                    Keys.onSpacePressed: root.toggleAdvanced()
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: root.advanced ? "󰅃" : "󰒓"
+                                        color: root.advanced ? root.focusColor : root.fg
+                                        font.family: root.fonts.family
+                                        font.pixelSize: root.px(1.25)
+                                    }
+                                    MouseArea {
+                                        id: settingsMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.toggleAdvanced()
+                                    }
+                                    Ui.PanelToolTip {
+                                        visible: settingsMouse.containsMouse
+                                        text: root.advanced ? "Back to recipes  ·  Ctrl+," : "All settings  ·  Ctrl+,"
+                                    }
+                                }
+                            }
+                            Flow {
+                                Layout.fillWidth: true
+                                visible: root.matched.chips.length > 0
+                                spacing: 6
+                                Text {
+                                    textFormat: Text.PlainText
+                                    text: "understood"
+                                    color: root.faint
+                                    font.family: root.fontFamily
+                                    font.pixelSize: root.px(0.833)
+                                    height: 20
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                                Repeater {
+                                    model: root.matched.chips
+                                    delegate: Rectangle {
+                                        id: chip
+                                        required property var modelData
+                                        implicitWidth: chipText.implicitWidth + 14
+                                        implicitHeight: 20
+                                        color: chip.modelData.ok ? root.alpha(root.sage, 0.18) : "transparent"
+                                        border.width: 1
+                                        border.color: chip.modelData.ok ? root.alpha(root.sage, 0.56) : root.line
+                                        Text {
+                                            id: chipText
+                                            anchors.centerIn: parent
+                                            textFormat: Text.PlainText
+                                            text: chip.modelData.text
+                                            color: chip.modelData.ok ? root.mist : root.faint
+                                            font.family: root.fontFamily
+                                            font.pixelSize: root.px(0.833)
+                                            font.strikeout: !chip.modelData.ok
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Recipes for this file, filtered by the command line.
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                visible: !root.advanced
+                                spacing: 0
+                                Repeater {
+                                    model: root.matched.rows
+                                    delegate: Rectangle {
+                                        id: recipeRow
+                                        required property var modelData
+                                        required property int index
+                                        readonly property bool current: recipeRow.index === root.selectedRow
+                                        readonly property bool blocked: recipeRow.modelData.problem !== ""
+                                        Layout.fillWidth: true
+                                        implicitHeight: recipeLine.implicitHeight + 18
+                                        color: recipeRow.current ? root.alpha(root.focusColor, 0.08)
+                                             : (recipeMouse.containsMouse ? root.surface : "transparent")
+                                        Accessible.role: Accessible.Button
+                                        Accessible.name: recipeRow.modelData.title + ". " + (recipeRow.modelData.problem || recipeRow.modelData.detail)
+                                        Rectangle { visible: recipeRow.current; width: 2; height: parent.height; color: root.focusColor }
+                                        Rectangle { visible: !recipeRow.current; anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.line }
+                                        RowLayout {
+                                            id: recipeLine
+                                            anchors.left: parent.left
+                                            anchors.right: parent.right
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            anchors.leftMargin: 14
+                                            anchors.rightMargin: 14
+                                            spacing: 14
+                                            Text {
+                                                textFormat: Text.PlainText
+                                                text: recipeRow.index < 9 ? String(recipeRow.index + 1) : ""
+                                                color: recipeRow.current ? root.focusColor : root.faint
+                                                font.family: root.fontFamily
+                                                font.pixelSize: root.px(0.917)
+                                                font.bold: true
+                                            }
+                                            Text {
+                                                textFormat: Text.PlainText
+                                                Layout.preferredWidth: root.px(3.5)
+                                                text: (recipeRow.modelData.fields.format === Model.SEQUENCE ? "SEQ" : recipeRow.modelData.fields.format).toUpperCase()
+                                                color: root.mist
+                                                font.family: root.fontFamily
+                                                font.pixelSize: root.px(0.833)
+                                                font.bold: true
+                                                font.letterSpacing: 1
+                                            }
+                                            ColumnLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 2
+                                                Text {
+                                                    textFormat: Text.PlainText
+                                                    Layout.fillWidth: true
+                                                    text: recipeRow.modelData.title
+                                                    color: root.fg
+                                                    opacity: recipeRow.blocked ? 0.5 : 1
+                                                    font.family: root.fontFamily
+                                                    font.pixelSize: root.px(1.083)
+                                                    font.bold: true
+                                                    elide: Text.ElideRight
+                                                }
+                                                Text {
+                                                    textFormat: Text.PlainText
+                                                    Layout.fillWidth: true
+                                                    text: recipeRow.modelData.problem || recipeRow.modelData.note || recipeRow.modelData.detail
+                                                    color: recipeRow.blocked ? root.urgent : (recipeRow.modelData.note ? root.fg : root.dim)
+                                                    font.family: root.fontFamily
+                                                    font.pixelSize: root.px(0.833)
+                                                    wrapMode: Text.WordWrap
+                                                }
+                                            }
+                                            Text {
+                                                textFormat: Text.PlainText
+                                                text: recipeRow.modelData.last ? "last used" : (recipeRow.modelData.custom ? "as typed" : "")
+                                                visible: text !== ""
+                                                color: recipeRow.current ? root.fg : root.faint
+                                                font.family: root.fontFamily
+                                                font.pixelSize: root.px(0.833)
+                                            }
+                                            Text {
+                                                textFormat: Text.PlainText
+                                                text: "⏎"
+                                                visible: recipeRow.current && !recipeRow.blocked
+                                                color: root.focusColor
+                                                font.family: root.fontFamily
+                                                font.pixelSize: root.px(1.083)
+                                                font.bold: true
+                                            }
+                                        }
+                                        MouseArea {
+                                            id: recipeMouse
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: recipeRow.blocked ? Qt.ArrowCursor : Qt.PointingHandCursor
+                                            onEntered: root.selectedRow = recipeRow.index
+                                            onClicked: root.runRecipe(recipeRow.index)
+                                        }
+                                    }
+                                }
+                                Hint {
+                                    Layout.topMargin: 6
+                                    visible: text !== ""
+                                    text: root.matched.note
+                                    color: root.fg
+                                }
+                                Hint {
+                                    Layout.topMargin: 6
+                                    visible: root.outputFolder !== ""
+                                    text: "saves to " + Model.folderLabel(root.outputFolder, root.homeDir)
+                                }
+                            }
+
+                            // Every field; edits rewrite the command line.
+                            Rectangle {
+                                Layout.fillWidth: true
+                                visible: root.advanced
+                                implicitHeight: fields.implicitHeight + 2
+                                color: root.alpha(root.fg, 0.02)
+                                border.width: 1
+                                border.color: root.line
+                                ColumnLayout {
+                                    id: fields
+                                    x: 1
+                                    y: 1
+                                    width: parent.width - 2
+                                    spacing: 0
+                                    FieldRow {
+                                        label: "FORMAT"
+                                        Flow {
+                                            Layout.fillWidth: true
+                                            spacing: 8
+                                            Repeater {
+                                                model: Model.formatGroups(root.inputKind, service.capabilities)
+                                                delegate: Segments {
+                                                    id: formatGroup
+                                                    required property var modelData
+                                                    options: formatGroup.modelData.items.map(item => ({ value: item, label: item === Model.SEQUENCE ? "SEQ" : item.toUpperCase() }))
+                                                    value: formatGroup.modelData.items.indexOf(root.formatValue) >= 0 ? root.formatValue : ""
+                                                    foreground: root.fg
+                                                    selectedColor: root.sage
+                                                    focusColor: root.focusColor
+                                                    fontFamily: root.fontFamily
+                                                    fontSize: root.px(0.917)
+                                                    Accessible.name: formatGroup.modelData.title + " formats"
+                                                    onChanged: v => { root.formatValue = v; root.syncCommand() }
+                                                }
+                                            }
+                                        }
+                                        Hint {
+                                            text: root.unavailableFormats !== "" ? root.unavailableFormats
+                                                : (root.inputKind === "image" ? "image formats" : "video formats  ·  stills  ·  SEQ = every frame as PNG")
+                                            color: root.faint
+                                            font.pixelSize: root.px(0.833)
+                                        }
+                                    }
+                                    FieldRow {
+                                        label: "MODE"
+                                        enabled: root.formatValue !== Model.SEQUENCE
+                                        Segments {
+                                            options: [{ value: "0", label: "target size" }, { value: "1", label: "quick" }]
+                                            value: String(root.modeIndex)
+                                            foreground: root.fg
+                                            selectedColor: root.sage
+                                            focusColor: root.focusColor
+                                            fontFamily: root.fontFamily
+                                            fontSize: root.px(0.917)
+                                            Accessible.name: "Conversion mode"
+                                            onChanged: v => { root.modeIndex = Number(v); root.syncCommand() }
+                                        }
+                                    }
+                                    FieldRow {
+                                        label: "MAX SIZE"
+                                        enabled: root.sizeShown
+                                        RowLayout {
+                                            spacing: 8
+                                            Ui.TextField {
+                                                id: sizeInput
+                                                text: "50"
+                                                Layout.preferredWidth: root.px(6.5)
+                                                foreground: root.fg
+                                                accent: root.accent
+                                                font.family: root.fontFamily
+                                                font.bold: true
+                                                selectByMouse: true
+                                                horizontalAlignment: TextInput.AlignRight
+                                                Accessible.name: "Maximum file size"
+                                                inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                                onTextEdited: root.syncCommand()
+                                            }
+                                            Segments {
+                                                options: ["MB", "KB"]
+                                                value: root.unitText
+                                                foreground: root.fg
+                                                selectedColor: root.sage
+                                                focusColor: root.focusColor
+                                                fontFamily: root.fontFamily
+                                                fontSize: root.px(0.917)
+                                                Accessible.name: "Size unit"
+                                                onChanged: v => { root.unitIndex = v === "KB" ? 1 : 0; root.syncCommand() }
+                                            }
+                                        }
+                                        // Common upload limits, one click each.
+                                        Flow {
+                                            Layout.fillWidth: true
+                                            spacing: 6
+                                            Text {
+                                                textFormat: Text.PlainText
+                                                text: "presets"
+                                                color: root.faint
+                                                font.family: root.fontFamily
+                                                font.pixelSize: root.px(0.833)
+                                                height: 18
+                                                verticalAlignment: Text.AlignVCenter
+                                            }
+                                            Repeater {
+                                                model: Model.SIZE_PRESETS
+                                                delegate: Rectangle {
+                                                    id: presetChip
+                                                    required property var modelData
+                                                    readonly property bool on: sizeInput.text === String(presetChip.modelData.size) && root.unitText === presetChip.modelData.unit
+                                                    implicitWidth: presetText.implicitWidth + 12
+                                                    implicitHeight: 18
+                                                    color: presetMouse.containsMouse ? root.surface : "transparent"
+                                                    border.width: 1
+                                                    border.color: presetChip.on ? root.focusColor : root.alpha(root.fg, 0.15)
+                                                    Text {
+                                                        id: presetText
+                                                        anchors.centerIn: parent
+                                                        textFormat: Text.PlainText
+                                                        text: presetChip.modelData.label
+                                                        color: presetChip.on ? root.focusColor : root.dim
+                                                        font.family: root.fontFamily
+                                                        font.pixelSize: root.px(0.833)
+                                                    }
+                                                    MouseArea {
+                                                        id: presetMouse
+                                                        anchors.fill: parent
+                                                        hoverEnabled: true
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: {
+                                                            sizeInput.text = String(presetChip.modelData.size)
+                                                            root.unitIndex = presetChip.modelData.unit === "KB" ? 1 : 0
+                                                            root.syncCommand()
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Hint {
+                                            visible: !Model.validSize(sizeInput.text)
+                                            text: "Enter a size greater than zero, for example 50 or 0.5."
+                                            color: root.urgent
+                                            font.pixelSize: root.px(0.833)
+                                        }
+                                    }
+                                    FieldRow {
+                                        label: "PREFER"
+                                        enabled: root.sizeShown && root.formatValue === "GIF" && root.inputKind !== "image"
+                                        Segments {
+                                            options: [{ value: "0", label: "motion" }, { value: "1", label: "balanced" }, { value: "2", label: "detail" }]
+                                            value: String(root.preferenceIndex)
+                                            foreground: root.fg
+                                            selectedColor: root.sage
+                                            focusColor: root.focusColor
+                                            fontFamily: root.fontFamily
+                                            fontSize: root.px(0.917)
+                                            Accessible.name: "Quality preference"
+                                            onChanged: v => { root.preferenceIndex = Number(v); root.syncCommand() }
+                                        }
+                                        Hint {
+                                            text: ["GIF only  ·  keep smooth motion, drop resolution first",
+                                                   "GIF only  ·  trade resolution and frame rate evenly",
+                                                   "GIF only  ·  keep a sharp picture, drop frames first"][root.preferenceIndex] || ""
+                                            color: root.faint
+                                            font.pixelSize: root.px(0.833)
+                                        }
+                                    }
+                                    FieldRow {
+                                        label: "QUALITY"
+                                        visible: root.formatValue !== Model.SEQUENCE
+                                        enabled: root.modeIndex === 1
+                                        Segments {
+                                            options: [{ value: "0", label: "small" }, { value: "1", label: "balanced" }, { value: "2", label: "high" }]
+                                            value: String(root.presetIndex)
+                                            foreground: root.fg
+                                            selectedColor: root.sage
+                                            focusColor: root.focusColor
+                                            fontFamily: root.fontFamily
+                                            fontSize: root.px(0.917)
+                                            Accessible.name: "Quality preset"
+                                            onChanged: v => { root.presetIndex = Number(v); root.syncCommand() }
+                                        }
+                                    }
+                                    FieldRow {
+                                        label: "FRAMES"
+                                        visible: root.formatValue === Model.SEQUENCE
+                                        Segments {
+                                            options: [{ value: "0", label: "every" }, { value: "24", label: "24 fps" }, { value: "10", label: "10 fps" }, { value: "5", label: "5 fps" }, { value: "1", label: "1 fps" }]
+                                            value: String(root.sequenceFps)
+                                            foreground: root.fg
+                                            selectedColor: root.sage
+                                            focusColor: root.focusColor
+                                            fontFamily: root.fontFamily
+                                            fontSize: root.px(0.917)
+                                            Accessible.name: "Frames per second to keep"
+                                            onChanged: v => { root.sequenceFps = Number(v); root.syncCommand() }
+                                        }
+                                    }
+                                    FieldRow {
+                                        label: "SAVE TO"
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 8
+                                            Text {
+                                                text: "󰉋"
+                                                color: root.mist
+                                                font.family: root.fonts.family
+                                                font.pixelSize: root.px(1.083)
+                                            }
+                                            Text {
+                                                textFormat: Text.PlainText
+                                                Layout.fillWidth: true
+                                                text: root.outputFolder ? Model.folderLabel(root.outputFolder, root.homeDir)
+                                                    : (service.inputPath ? "next to source  ·  " + Model.folderLabel(Model.dirname(service.inputPath), root.homeDir) : "next to source")
+                                                color: root.outputFolder ? root.fg : root.dim
+                                                font.family: root.fontFamily
+                                                font.pixelSize: root.px(1)
+                                                font.bold: root.outputFolder !== ""
+                                                elide: Text.ElideLeft
+                                                Accessible.name: "Output folder: " + text
+                                            }
+                                            TextButton {
+                                                label: folderPicker.running ? "choosing…" : "change"
+                                                enabled: !root.pickerBusy
+                                                onClicked: root.chooseFolder()
+                                            }
+                                            TextButton {
+                                                visible: root.outputFolder !== ""
+                                                label: "×"
+                                                Accessible.name: "Save next to the source again"
+                                                onClicked: root.setOutputFolder("")
+                                            }
+                                        }
+                                        Row {
+                                            spacing: 8
+                                            activeFocusOnTab: true
+                                            Accessible.role: Accessible.CheckBox
+                                            Accessible.name: "Remember this folder"
+                                            Keys.onSpacePressed: root.toggleRememberFolder()
+                                            Rectangle {
+                                                width: 11
+                                                height: 11
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                color: prefs.rememberFolder ? root.sage : "transparent"
+                                                border.width: 1
+                                                border.color: parent.activeFocus ? root.focusColor : (prefs.rememberFolder ? root.sage : root.alpha(root.fg, 0.4))
+                                            }
+                                            Text {
+                                                textFormat: Text.PlainText
+                                                text: "remember this folder"
+                                                color: root.dim
+                                                font.family: root.fontFamily
+                                                font.pixelSize: root.px(0.833)
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    anchors.leftMargin: -19
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: root.toggleRememberFolder()
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // What Enter will make, and the button that makes it.
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        implicitHeight: summaryRow.implicitHeight + 24
+                                        color: root.alpha(root.focusColor, 0.06)
+                                        RowLayout {
+                                            id: summaryRow
+                                            anchors.left: parent.left
+                                            anchors.right: parent.right
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            anchors.leftMargin: 14
+                                            anchors.rightMargin: 14
+                                            spacing: 12
+                                            ColumnLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 3
+                                                SectionLabel { text: "WILL MAKE"; font.pixelSize: root.px(0.75) }
+                                                Text {
+                                                    textFormat: Text.PlainText
+                                                    Layout.fillWidth: true
+                                                    text: Model.outputName(service.inputPath, root.currentFields())
+                                                    color: root.fg
+                                                    font.family: root.fontFamily
+                                                    font.pixelSize: root.px(1)
+                                                    font.bold: true
+                                                    elide: Text.ElideMiddle
+                                                }
+                                                Text {
+                                                    textFormat: Text.PlainText
+                                                    Layout.fillWidth: true
+                                                    text: root.fieldsRecipe.problem || root.fieldsRecipe.note || root.fieldsRecipe.detail
+                                                    color: root.fieldsRecipe.problem ? root.urgent : root.dim
+                                                    font.family: root.fontFamily
+                                                    font.pixelSize: root.px(0.833)
+                                                    wrapMode: Text.WordWrap
+                                                }
+                                            }
+                                            Rectangle {
+                                                id: convertButton
+                                                implicitWidth: convertRow.implicitWidth + 28
+                                                implicitHeight: convertRow.implicitHeight + 18
+                                                color: root.canConvert ? (convertMouse.pressed ? Qt.darker(root.focusColor, 1.15) : root.focusColor) : root.alpha(root.fg, 0.12)
+                                                border.width: convertButton.activeFocus ? 2 : 0
+                                                border.color: root.fg
+                                                activeFocusOnTab: root.canConvert
+                                                Accessible.role: Accessible.Button
+                                                Accessible.name: "Convert"
+                                                Keys.onReturnPressed: root.startConversion()
+                                                Keys.onEnterPressed: root.startConversion()
+                                                Keys.onSpacePressed: root.startConversion()
+                                                Row {
+                                                    id: convertRow
+                                                    anchors.centerIn: parent
+                                                    spacing: 8
+                                                    Repeater {
+                                                        model: ["⏎", "convert"]
+                                                        delegate: Text {
+                                                            required property string modelData
+                                                            textFormat: Text.PlainText
+                                                            text: modelData
+                                                            color: root.canConvert ? root.bg : root.faint
+                                                            font.family: root.fontFamily
+                                                            font.pixelSize: root.px(1)
+                                                            font.bold: true
+                                                        }
+                                                    }
+                                                }
+                                                MouseArea {
+                                                    id: convertMouse
+                                                    anchors.fill: parent
+                                                    cursorShape: root.canConvert ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                                    onClicked: root.startConversion()
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // ── Converting ────────────────────────────────────
+                        ColumnLayout {
+                            visible: root.screen === "converting"
+                            Layout.fillWidth: true
+                            spacing: 16
+                            PreviewImage {
+                                Layout.fillWidth: true
+                                title: "Source"
+                                showHeader: false
+                                boxHeight: 200
+                                dimmed: 0.55
+                                imageSource: preview.sourceUrl
+                                loading: preview.sourceLoading
+                                foreground: root.fg
+                                background: root.bg
+                                fontFamily: root.fontFamily
+                                fontSize: root.fonts.body
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                spacing: Style.space(2)
+                                spacing: 4
                                 Text {
-                                    id: chooseLabel
                                     textFormat: Text.PlainText
                                     Layout.fillWidth: true
-                                    text: root.pickerBusy ? "Choosing file…"
-                                        : choose.dragging ? "Drop to open"
-                                        : (service.inputPath ? Model.name(service.inputPath) : "Choose a video or image")
-                                    color: root.fg
+                                    text: Model.name(service.inputPath) + "  →  " + root.jobCommand
+                                    color: root.dim
                                     font.family: root.fontFamily
-                                    font.pixelSize: root.fonts.subtitle
-                                    font.bold: service.inputPath !== ""
+                                    font.pixelSize: root.px(0.917)
                                     elide: Text.ElideMiddle
                                 }
                                 Text {
                                     textFormat: Text.PlainText
                                     Layout.fillWidth: true
-                                    text: service.metadata !== null ? Model.mediaDescription(service.metadata)
-                                        : (service.inputPath ? "Reading media…" : "Enter to browse  ·  or drop a file here")
-                                    color: root.dim
+                                    text: service.cancelling ? "Cancelling…"
+                                        : (service.phase.indexOf("Finding") === 0 ? "Finding the best quality that fits" : service.phase)
+                                    color: root.fg
                                     font.family: root.fontFamily
-                                    font.pixelSize: root.fonts.caption
-                                    elide: Text.ElideRight
+                                    font.pixelSize: root.px(1.5)
+                                    font.bold: true
+                                    wrapMode: Text.WordWrap
                                 }
                             }
-                            Text {
-                                visible: service.inputPath !== "" && !root.pickerBusy
-                                text: "Change"
-                                color: root.dim
-                                font.family: root.fontFamily
-                                font.pixelSize: root.fonts.caption
-                            }
-                        }
-                        MouseArea {
-                            id: chooseMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: { choose.forceActiveFocus(); root.chooseVideo() }
-                        }
-                        DropArea {
-                            id: dropArea
-                            anchors.fill: parent
-                            onDropped: drop => {
-                                if (!service.busy && drop.urls.length === 1) {
-                                    var path = Model.localPath(drop.urls[0])
-                                    if (path) { service.selectFile(path); drop.acceptProposedAction() }
-                                }
-                            }
-                        }
-                    }
-                    // Opt-in desktop entry; offered only before a file is chosen.
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        visible: !service.inputPath && !service.result && service.openWith !== null
-                        spacing: Style.space(4)
-                        ActionButton {
-                            bordered: false
-                            iconText: service.openWith && service.openWith.enabled ? "󰄲" : "󰄱"
-                            text: "Show in Open With and app search"
-                            selected: !!(service.openWith && service.openWith.enabled)
-                            Accessible.name: "Show OmaConvert in Open With and app search"
-                            onClicked: service.setOpenWith(!(service.openWith && service.openWith.enabled))
-                        }
-                        Hint {
-                            visible: text !== ""
-                            text: service.openWithError !== "" ? service.openWithError
-                                : "Adds OmaConvert to your file manager's Open With menu for videos and images. Default apps are not changed."
-                            color: service.openWithError !== "" ? root.urgent : root.dim
-                        }
-                    }
-                    PreviewImage {
-                        Layout.fillWidth: true
-                        visible: service.metadata !== null && !service.result
-                                 && (preview.sourceUrl !== "" || preview.sourceLoading)
-                        title: "Preview"
-                        imageSource: preview.sourceUrl
-                        loading: preview.sourceLoading
-                        meta: service.metadata ? Model.dimensionsText(service.metadata.width, service.metadata.height) : ""
-                        foreground: root.fg
-                        background: root.menuTheme.background
-                        fontFamily: root.fontFamily
-                        fontSize: root.fonts.body
-                        radius: Style.cornerRadius
-                    }
-                    TrimBar {
-                        id: trimBar
-                        Layout.fillWidth: true
-                        visible: root.trimShown && !service.result && !service.busy
-                        duration: (service.metadata && service.metadata.duration) || 0
-                        trackColor: Style.selectedFillFor(root.fg, root.accent)
-                        fillColor: root.accent
-                        knobColor: root.fg
-                        knobBorderColor: root.menuTheme.background
-                        textColor: root.fg
-                        urgentColor: root.urgent
-                        fontFamily: root.fontFamily
-                        fontSize: root.fonts.body
-                        controlHeight: root.spacing.controlHeight
-                        onScrubRequested: (position) => {
-                            if (service.inputPath) preview.requestSource(service.inputPath, position)
-                        }
-                    }
-
-                    // ── Output: command line, recipes, all settings ───────
-                    // Shown once the file is read: ready recipes for this
-                    // file, a command line that understands "gif 30mb", and
-                    // "+" for every field. Fields and the line stay in sync.
-                    Ui.PanelSeparator { Layout.fillWidth: true; foreground: root.fg; visible: output.visible }
-                    ColumnLayout {
-                        id: output
-                        Layout.fillWidth: true
-                        visible: service.metadata !== null && !service.result && !service.busy
-                        spacing: Style.space(10)
-                        Ui.PanelSectionHeader {
-                            text: root.advanced ? "ALL SETTINGS" : "WHAT TO MAKE"
-                            foreground: root.fg
-                            fontFamily: root.fontFamily
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: Style.space(6)
-                            Ui.TextField {
-                                id: commandInput
+                            ColumnLayout {
                                 Layout.fillWidth: true
-                                foreground: root.fg
-                                accent: root.accent
-                                font.family: root.fontFamily
-                                selectByMouse: true
-                                placeholderText: root.inputKind === "image" ? "webp  ·  png 500kb  ·  jpg" : "gif 30mb  ·  mp4 quick  ·  png frames 10fps"
-                                Accessible.name: "What to make, for example gif 30mb"
-                                onTextEdited: root.commandEdited()
-                                Keys.onUpPressed: event => { root.moveSelection(-1); event.accepted = true }
-                                Keys.onDownPressed: event => { root.moveSelection(1); event.accepted = true }
-                                Keys.onReturnPressed: event => root.commandReturn(event)
-                                Keys.onEnterPressed: event => root.commandReturn(event)
-                                Keys.onEscapePressed: event => {
-                                    if (text === "") { event.accepted = false; return }
-                                    text = ""
-                                    root.commandEdited()
-                                    event.accepted = true
-                                }
-                            }
-                            ActionButton {
-                                id: plusButton
-                                iconText: root.advanced ? "󰍴" : "󰐕"
-                                tooltipText: root.advanced ? "Back to recipes" : "All settings"
-                                selected: root.advanced
-                                Accessible.name: root.advanced ? "Hide settings" : "Show all settings"
-                                onClicked: root.toggleAdvanced()
-                            }
-                        }
-                        Flow {
-                            Layout.fillWidth: true
-                            visible: root.matched.chips.length > 0
-                            spacing: Style.space(6)
-                            Text {
-                                textFormat: Text.PlainText
-                                text: "Understood"
-                                color: root.dim
-                                font.family: root.fontFamily
-                                font.pixelSize: root.fonts.caption
-                                height: Style.space(22)
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            Repeater {
-                                model: root.matched.chips
-                                delegate: Ui.BorderSurface {
-                                    id: chip
-                                    required property var modelData
-                                    implicitWidth: chipText.implicitWidth + Style.space(14)
-                                    implicitHeight: Style.space(22)
-                                    radius: Style.cornerRadius
-                                    color: "transparent"
-                                    borderSpec: Border.controlSpec(chip.modelData.ok ? "selected" : "normal", root.fg, root.accent)
+                                spacing: 6
+                                RowLayout {
+                                    Layout.fillWidth: true
                                     Text {
-                                        id: chipText
-                                        anchors.centerIn: parent
                                         textFormat: Text.PlainText
-                                        text: chip.modelData.text
-                                        color: chip.modelData.ok ? root.fg : root.dim
+                                        Layout.fillWidth: true
+                                        text: service.currentPass ? "pass " + service.currentPass : (service.phase.indexOf("Finding") === 0 ? "analysing samples" : "")
+                                        color: root.mist
                                         font.family: root.fontFamily
-                                        font.pixelSize: root.fonts.caption
-                                        font.strikeout: !chip.modelData.ok
+                                        font.pixelSize: root.px(0.917)
+                                        font.bold: true
+                                    }
+                                    Text {
+                                        visible: !progressTrack.indeterminate
+                                        text: Math.round(service.progress * 100) + "%"
+                                        color: root.fg
+                                        font.family: root.fontFamily
+                                        font.pixelSize: root.px(0.917)
+                                        font.bold: true
+                                    }
+                                }
+                                Rectangle {
+                                    id: progressTrack
+                                    readonly property bool indeterminate: service.phase.indexOf("Finding") === 0
+                                    Layout.fillWidth: true
+                                    implicitHeight: 6
+                                    color: root.alpha(root.fg, 0.08)
+                                    clip: true
+                                    Rectangle {
+                                        visible: !progressTrack.indeterminate
+                                        height: parent.height
+                                        color: root.focusColor
+                                        width: parent.width * Math.max(0, Math.min(1, service.progress))
+                                        Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                                    }
+                                    Rectangle {
+                                        id: sweep
+                                        visible: progressTrack.indeterminate
+                                        height: parent.height
+                                        color: root.focusColor
+                                        width: parent.width * 0.3
+                                        NumberAnimation on x {
+                                            running: sweep.visible && service.busy
+                                            from: -sweep.width
+                                            to: progressTrack.width
+                                            duration: 1200
+                                            loops: Animation.Infinite
+                                            easing.type: Easing.InOutQuad
+                                        }
                                     }
                                 }
                             }
-                        }
-
-                        // Recipes for this file, filtered by the command line.
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            visible: !root.advanced
-                            spacing: Style.space(4)
-                            Repeater {
-                                model: root.matched.rows
-                                delegate: Ui.BorderSurface {
-                                    id: recipeRow
-                                    required property var modelData
-                                    required property int index
-                                    readonly property bool current: recipeRow.index === root.selectedRow
-                                    readonly property bool blocked: recipeRow.modelData.problem !== ""
-                                    Layout.fillWidth: true
-                                    implicitHeight: recipeLine.implicitHeight + Style.space(16)
-                                    radius: Style.cornerRadius
-                                    color: recipeRow.current ? Style.selectedFillFor(root.fg, root.accent)
-                                         : Style.controlFill(false, recipeMouse.containsMouse, root.fg, root.accent)
-                                    borderSpec: Border.controlSpec(recipeRow.current ? "selected" : (recipeMouse.containsMouse ? "hover-cursor" : "normal"), root.fg, root.accent)
-                                    Accessible.role: Accessible.Button
-                                    Accessible.name: recipeRow.modelData.title + ". " + (recipeRow.modelData.problem || recipeRow.modelData.detail)
-                                    RowLayout {
-                                        id: recipeLine
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        anchors.leftMargin: Style.space(12)
-                                        anchors.rightMargin: Style.space(12)
-                                        spacing: Style.space(12)
-                                        Text {
-                                            textFormat: Text.PlainText
-                                            Layout.preferredWidth: Style.space(44)
-                                            horizontalAlignment: Text.AlignHCenter
-                                            text: recipeRow.modelData.fields.format === Model.SEQUENCE ? "SEQ" : recipeRow.modelData.fields.format
-                                            color: recipeRow.current ? root.accent : root.dim
-                                            font.family: root.fontFamily
-                                            font.pixelSize: root.fonts.caption
-                                            font.bold: true
-                                        }
-                                        ColumnLayout {
+                            // Every size the search measured, against the limit.
+                            ColumnLayout {
+                                id: candList
+                                Layout.fillWidth: true
+                                visible: service.candidates.length > 0
+                                spacing: 8
+                                readonly property real span: Math.max(root.jobLimitBytes * 1.39,
+                                    Math.max.apply(null, service.candidates.map(c => c.estimated_bytes || 0)), 1)
+                                SectionLabel { text: "CANDIDATES" }
+                                Repeater {
+                                    model: service.candidates
+                                    delegate: ColumnLayout {
+                                        id: cand
+                                        required property var modelData
+                                        readonly property real bytes: cand.modelData.estimated_bytes || 0
+                                        readonly property bool fits: root.jobLimitBytes <= 0 || cand.bytes <= root.jobLimitBytes
+                                        Layout.fillWidth: true
+                                        spacing: 4
+                                        RowLayout {
                                             Layout.fillWidth: true
-                                            spacing: Style.space(2)
                                             Text {
                                                 textFormat: Text.PlainText
                                                 Layout.fillWidth: true
-                                                text: recipeRow.modelData.title
+                                                text: cand.modelData.width + "×" + cand.modelData.height
+                                                      + (cand.modelData.fps ? "  ·  " + Number(cand.modelData.fps).toFixed(1).replace(".0", "") + " fps" : "")
+                                                      + (cand.modelData.colors ? "  ·  " + cand.modelData.colors + " col" : "")
                                                 color: root.fg
-                                                opacity: recipeRow.blocked ? 0.5 : 1
                                                 font.family: root.fontFamily
-                                                font.pixelSize: root.fonts.body
-                                                font.bold: true
+                                                font.pixelSize: root.px(0.917)
                                                 elide: Text.ElideRight
                                             }
                                             Text {
                                                 textFormat: Text.PlainText
-                                                Layout.fillWidth: true
-                                                text: (recipeRow.modelData.last ? "Last used  ·  " : (recipeRow.modelData.custom ? "As typed  ·  " : ""))
-                                                      + (recipeRow.modelData.problem || recipeRow.modelData.note || recipeRow.modelData.detail)
-                                                color: recipeRow.blocked ? root.urgent : (recipeRow.modelData.note ? root.fg : root.dim)
+                                                text: "≈ " + Model.compactSize(cand.bytes)
+                                                color: cand.fits ? root.mist : root.urgent
                                                 font.family: root.fontFamily
-                                                font.pixelSize: root.fonts.caption
-                                                wrapMode: Text.WordWrap
+                                                font.pixelSize: root.px(0.917)
+                                                font.bold: true
                                             }
                                         }
-                                        Text {
-                                            textFormat: Text.PlainText
-                                            text: "↵"
-                                            visible: recipeRow.current && !recipeRow.blocked
-                                            color: root.accent
-                                            font.family: root.fontFamily
-                                            font.pixelSize: root.fonts.body
+                                        Item {
+                                            Layout.fillWidth: true
+                                            implicitHeight: 10
+                                            Rectangle { anchors.verticalCenter: parent.verticalCenter; width: parent.width; height: 4; color: root.alpha(root.fg, 0.06) }
+                                            Rectangle {
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                height: 4
+                                                width: parent.width * Math.min(1, cand.bytes / candList.span)
+                                                color: cand.fits ? root.sage : root.urgent
+                                            }
+                                            Rectangle {
+                                                visible: root.jobLimitBytes > 0
+                                                x: parent.width * root.jobLimitBytes / candList.span
+                                                width: 1
+                                                height: 10
+                                                color: root.fg
+                                            }
                                         }
                                     }
-                                    MouseArea {
-                                        id: recipeMouse
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: recipeRow.blocked ? Qt.ArrowCursor : Qt.PointingHandCursor
-                                        onEntered: root.selectedRow = recipeRow.index
-                                        onClicked: root.runRecipe(recipeRow.index)
-                                    }
-                                }
-                            }
-                            Hint {
-                                visible: text !== ""
-                                text: root.matched.note
-                                color: root.fg
-                            }
-                            Hint {
-                                visible: root.outputFolder !== ""
-                                text: "Saves to " + Model.folderLabel(root.outputFolder, root.homeDir) + "  ·  + to change"
-                            }
-                            Hint { text: "↑↓ choose  ·  Enter convert  ·  + all settings" }
-                        }
-
-                        // Every field, as before; edits rewrite the command line.
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            visible: root.advanced
-                            spacing: Style.space(10)
-                            Repeater {
-                                model: Model.formatGroups(root.inputKind, service.capabilities)
-                                delegate: RowLayout {
-                                    id: formatGroup
-                                    required property var modelData
-                                    Layout.fillWidth: true
-                                    spacing: Style.space(10)
-                                    FieldLabel { text: formatGroup.modelData.title }
-                                    Ui.ButtonGroup {
-                                        options: formatGroup.modelData.items
-                                        value: formatGroup.modelData.items.indexOf(root.formatValue) >= 0 ? root.formatValue : ""
-                                        foreground: root.fg
-                                        accent: root.accent
-                                        background: "transparent"
-                                        fontFamily: root.fontFamily
-                                        Accessible.name: formatGroup.modelData.title + " formats"
-                                        onChanged: v => { root.formatValue = v; root.syncCommand() }
-                                    }
-                                }
-                            }
-                            Hint {
-                                visible: text !== ""
-                                text: root.unavailableFormats
-                            }
-                            RowLayout {
-                                visible: root.formatValue !== Model.SEQUENCE
-                                Layout.fillWidth: true
-                                spacing: Style.space(10)
-                                FieldLabel { text: "Mode" }
-                                Ui.ButtonGroup {
-                                    options: [{ value: "0", label: "Target size", icon: "󰘕" }, { value: "1", label: "Quick", icon: "󱐋" }]
-                                    value: String(root.modeIndex)
-                                    foreground: root.fg
-                                    accent: root.accent
-                                    background: "transparent"
-                                    fontFamily: root.fontFamily
-                                    Accessible.name: "Conversion mode"
-                                    onChanged: v => { root.modeIndex = Number(v); root.syncCommand() }
                                 }
                             }
                             RowLayout {
-                                visible: root.sizeShown
                                 Layout.fillWidth: true
-                                spacing: Style.space(10)
-                                FieldLabel { text: "Max size" }
-                                Ui.TextField {
-                                    id: sizeInput
-                                    text: "50"
-                                    Layout.preferredWidth: Style.space(88)
-                                    foreground: root.fg
-                                    accent: root.accent
-                                    selectByMouse: true
-                                    horizontalAlignment: TextInput.AlignRight
-                                    Accessible.name: "Maximum file size"
-                                    inputMethodHints: Qt.ImhFormattedNumbersOnly
-                                    onTextEdited: root.syncCommand()
-                                }
-                                Ui.ButtonGroup {
-                                    options: ["MB", "KB"]
-                                    value: root.unitText
-                                    foreground: root.fg
-                                    accent: root.accent
-                                    background: "transparent"
-                                    fontFamily: root.fontFamily
-                                    Accessible.name: "Size unit"
-                                    onChanged: v => { root.unitIndex = v === "KB" ? 1 : 0; root.syncCommand() }
-                                }
-                            }
-                            Hint {
-                                visible: root.sizeShown
-                                text: Model.validSize(sizeInput.text) ? "1 MB = 1,000,000 bytes. Final file size is verified." : "Enter a size greater than zero, for example 50 or 0.5."
-                                color: Model.validSize(sizeInput.text) ? root.dim : root.urgent
-                            }
-                            RowLayout {
-                                visible: root.sizeShown && root.formatValue === "GIF" && root.inputKind !== "image"
-                                Layout.fillWidth: true
-                                spacing: Style.space(10)
-                                FieldLabel { text: "Prefer" }
-                                Ui.ButtonGroup {
-                                    options: [{ value: "0", label: "Motion" }, { value: "1", label: "Balanced" }, { value: "2", label: "Detail" }]
-                                    value: String(root.preferenceIndex)
-                                    foreground: root.fg
-                                    accent: root.accent
-                                    background: "transparent"
-                                    fontFamily: root.fontFamily
-                                    Accessible.name: "Quality preference"
-                                    onChanged: v => { root.preferenceIndex = Number(v); root.syncCommand() }
-                                }
-                            }
-                            RowLayout {
-                                visible: root.modeIndex === 1 && root.formatValue !== Model.SEQUENCE
-                                Layout.fillWidth: true
-                                spacing: Style.space(10)
-                                FieldLabel { text: "Quality" }
-                                Ui.ButtonGroup {
-                                    options: [{ value: "0", label: "Small" }, { value: "1", label: "Balanced" }, { value: "2", label: "High" }]
-                                    value: String(root.presetIndex)
-                                    foreground: root.fg
-                                    accent: root.accent
-                                    background: "transparent"
-                                    fontFamily: root.fontFamily
-                                    Accessible.name: "Quality preset"
-                                    onChanged: v => { root.presetIndex = Number(v); root.syncCommand() }
-                                }
-                            }
-                            RowLayout {
-                                visible: root.formatValue === Model.SEQUENCE
-                                Layout.fillWidth: true
-                                spacing: Style.space(10)
-                                FieldLabel { text: "Frames" }
-                                Ui.ButtonGroup {
-                                    options: [{ value: "0", label: "Every frame" }, { value: "24", label: "24 fps" }, { value: "10", label: "10 fps" }, { value: "5", label: "5 fps" }, { value: "1", label: "1 fps" }]
-                                    value: String(root.sequenceFps)
-                                    foreground: root.fg
-                                    accent: root.accent
-                                    background: "transparent"
-                                    fontFamily: root.fontFamily
-                                    Accessible.name: "Frames per second to keep"
-                                    onChanged: v => { root.sequenceFps = Number(v); root.syncCommand() }
-                                }
-                            }
-                            RowLayout {
-                                id: saveToRow
-                                Layout.fillWidth: true
-                                spacing: Style.space(10)
-                                FieldLabel { text: "Save to" }
+                                Layout.topMargin: 6
                                 Text {
-                                    id: saveToLabel
                                     textFormat: Text.PlainText
                                     Layout.fillWidth: true
-                                    text: root.outputFolder ? Model.folderLabel(root.outputFolder, root.homeDir)
-                                        : (service.inputPath ? "Next to source  ·  " + Model.folderLabel(Model.dirname(service.inputPath), root.homeDir) : "Next to source")
-                                    color: root.outputFolder ? root.fg : root.dim
+                                    text: Model.duration(Math.max(0, (root.clock - service.startedAt) / 1000)) + " elapsed"
+                                    color: root.faint
                                     font.family: root.fontFamily
-                                    font.pixelSize: root.fonts.body
-                                    elide: Text.ElideLeft
-                                    Accessible.name: "Output folder: " + text
+                                    font.pixelSize: root.px(0.917)
                                 }
-                                ActionButton {
-                                    iconText: "󰉋"
-                                    text: folderPicker.running ? "Choosing…" : "Change"
-                                    tooltipText: "Choose output folder"
-                                    enabled: !root.pickerBusy
-                                    onClicked: root.chooseFolder()
-                                }
-                                ActionButton {
-                                    visible: root.outputFolder !== ""
-                                    iconText: "󰅖"
-                                    tooltipText: "Save next to the source again"
-                                    Accessible.name: "Reset output folder"
-                                    onClicked: root.setOutputFolder("")
-                                }
-                            }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: Style.space(10)
-                                Item { Layout.preferredWidth: Style.space(104) }
-                                ActionButton {
-                                    bordered: false
-                                    iconText: prefs.rememberFolder ? "󰄲" : "󰄱"
-                                    text: "Remember this folder"
-                                    selected: prefs.rememberFolder
-                                    Accessible.name: "Remember output folder"
-                                    onClicked: root.toggleRememberFolder()
-                                }
-                                Item { Layout.fillWidth: true }
-                            }
-                            Hint {
-                                text: root.fieldsRecipe.detail
-                            }
-                            Hint {
-                                visible: text !== ""
-                                text: root.fieldsRecipe.problem || root.fieldsRecipe.note
-                                color: root.fieldsRecipe.problem ? root.urgent : root.fg
-                            }
-                            ActionButton {
-                                Layout.fillWidth: true
-                                Layout.topMargin: Style.space(4)
-                                implicitHeight: Style.space(36)
-                                iconText: "󰑐"
-                                text: "Convert  ·  Ctrl+Enter"
-                                selected: true
-                                enabled: root.canConvert
-                                onClicked: root.startConversion()
-                            }
-                        }
-                    }
-
-                    // ── Progress ──────────────────────────────────────────
-                    ColumnLayout {
-                        visible: service.busy
-                        Layout.fillWidth: true
-                        spacing: Style.space(8)
-                        Ui.PanelSectionHeader { text: "CONVERTING"; foreground: root.fg; fontFamily: root.fontFamily }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Text {
-                                textFormat: Text.PlainText
-                                Layout.fillWidth: true
-                                text: service.phase
-                                color: root.fg
-                                font.family: root.fontFamily
-                                font.pixelSize: root.fonts.body
-                                wrapMode: Text.WordWrap
-                            }
-                            Text {
-                                visible: !progressTrack.indeterminate
-                                text: Math.round(service.progress * 100) + "%"
-                                color: root.dim
-                                font.family: root.fontFamily
-                                font.pixelSize: root.fonts.body
-                                font.bold: true
-                            }
-                        }
-                        Rectangle {
-                            id: progressTrack
-                            readonly property bool indeterminate: service.operation !== "convert" || service.phase.indexOf("Finding") === 0
-                            Layout.fillWidth: true
-                            implicitHeight: Math.max(4, Math.round(root.spacing.controlHeight * 0.14))
-                            radius: height / 2
-                            color: Style.selectedFillFor(root.fg, root.accent)
-                            clip: true
-                            Rectangle {
-                                visible: !progressTrack.indeterminate
-                                height: parent.height
-                                radius: parent.radius
-                                color: root.accent
-                                width: parent.width * Math.max(0, Math.min(1, service.progress))
-                                Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                            }
-                            Rectangle {
-                                id: sweep
-                                visible: progressTrack.indeterminate
-                                height: parent.height
-                                radius: parent.radius
-                                color: root.accent
-                                width: parent.width * 0.3
-                                NumberAnimation on x {
-                                    running: sweep.visible && service.busy
-                                    from: -sweep.width
-                                    to: progressTrack.width
-                                    duration: 1200
-                                    loops: Animation.Infinite
-                                    easing.type: Easing.InOutQuad
+                                TextButton {
+                                    key: "esc"
+                                    label: service.cancelling ? "cancelling…" : "cancel"
+                                    enabled: !service.cancelling
+                                    onClicked: service.cancel()
                                 }
                             }
                         }
+                        // Reading a file: the phase on its own.
                         Hint {
-                            text: (service.candidate ? service.candidate.width + " px" + (service.candidate.fps ? "  ·  " + service.candidate.fps + " fps" : "") : "")
-                                + (service.currentPass ? "  ·  Pass " + service.currentPass : "")
-                                + (root.sizeShown ? "  ·  ≤ " + sizeInput.text + " " + root.unitText : "")
+                            visible: service.busy && root.screen !== "converting"
+                            text: service.phase
                         }
+
+                        // ── Result ────────────────────────────────────────
+                        ResultView {
+                            Layout.fillWidth: true
+                            visible: root.screen === "result"
+                            result: service.result || ({})
+                            sourcePreview: preview.sourceUrl
+                            resultPreview: preview.resultUrl
+                            sourceLoading: preview.sourceLoading
+                            resultLoading: preview.resultLoading
+                            savings: (service.metadata && service.result) ? Model.savingsText(service.metadata.bytes, service.result.bytes) : ""
+                            trimText: (service.result && service.result.trim_start !== undefined && service.metadata) ? Model.trimLabel(service.result.trim_start, service.result.trim_end, service.metadata.duration) : ""
+                            sourceMeta: service.metadata ? Model.dimensionsText(service.metadata.width, service.metadata.height) + "  ·  " + Model.compactSize(service.metadata.bytes) : ""
+                            resultMeta: service.result ? Model.dimensionsText(service.result.width, service.result.height) + "  ·  " + Model.compactSize(service.result.bytes) : ""
+                            sourceBytes: (service.metadata && service.metadata.bytes) || 0
+                            limitBytes: root.jobLimitBytes
+                            foreground: root.fg
+                            background: root.bg
+                            accent: root.sage
+                            okColor: root.mist
+                            limitColor: root.focusColor
+                            fontFamily: root.fontFamily
+                            fontSize: root.fonts.body
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            visible: root.screen === "result"
+                            spacing: 0
+                            ActionRow { primary: true; glyph: "󰈔"; key: "⏎"; label: service.result && service.result.kind === "sequence" ? "Open frames" : "Open file"; onTriggered: Qt.openUrlExternally(Model.fileUri(service.result.path)) }
+                            ActionRow { glyph: "󰉋"; key: "o"; label: "Show in folder"; onTriggered: root.openResultFolder() }
+                            ActionRow { glyph: "󰆏"; key: "c"; label: service.result && service.result.kind === "sequence" ? "Copy folder to clipboard" : "Copy file to clipboard"; onTriggered: root.copy(Model.fileUri(service.result.path) + "\r\n", true) }
+                            ActionRow { glyph: "󰅍"; key: "p"; label: "Copy path"; onTriggered: root.copy(service.result.path, false) }
+                            ActionRow { glyph: "󰐕"; key: "n"; label: "Convert another"; onTriggered: root.convertAnother() }
+                        }
+
+                        // ── Status ────────────────────────────────────────
+                        Text {
+                            textFormat: Text.PlainText
+                            Layout.fillWidth: true
+                            visible: root.staleInterface
+                            text: "󰀪  Interface v" + root.appVersion + " is running, but v" + service.backendVersion
+                                  + " is installed. Run `omarchy restart shell` to load the update."
+                            color: root.urgent
+                            font.family: root.fontFamily
+                            font.pixelSize: root.fonts.bodySmall
+                            wrapMode: Text.WordWrap
+                        }
+                        Hint { text: "󰄬  " + root.clipboardStatus; visible: root.clipboardStatus !== ""; color: root.fg }
+                        Text {
+                            textFormat: Text.PlainText
+                            Layout.fillWidth: true
+                            text: "󰅚  " + service.error
+                            visible: service.error !== ""
+                            color: root.urgent
+                            font.family: root.fontFamily
+                            font.pixelSize: root.fonts.body
+                            font.bold: true
+                            wrapMode: Text.WordWrap
+                        }
+                        Hint { text: service.phase; visible: !service.busy && !service.result && text.indexOf("Cancelled") === 0; color: root.fg }
+                        // The gifsicle tip only matters when a GIF is about to be made.
+                        Hint { text: service.notice; visible: text !== "" && !service.busy && (text.indexOf("gifsicle") < 0 || (root.inputKind !== "image" && root.activeFormat === "GIF")) }
                         ActionButton {
-                            iconText: "󰜺"
-                            text: service.cancelling ? "Cancelling…" : "Cancel  ·  Esc"
-                            enabled: !service.cancelling
-                            onClicked: service.cancel()
+                            id: detailsButton
+                            property bool checked: false
+                            visible: service.details !== ""
+                            bordered: false
+                            iconText: checked ? "󰅀" : "󰅂"
+                            text: "Details"
+                            onClicked: checked = !checked
+                        }
+                        TextArea {
+                            Layout.fillWidth: true
+                            Layout.maximumHeight: 120
+                            visible: detailsButton.checked && service.details !== ""
+                            text: service.details
+                            readOnly: true
+                            selectByMouse: true
+                            wrapMode: TextEdit.WrapAnywhere
+                            color: root.dim
+                            font.family: root.fontFamily
+                            font.pixelSize: root.fonts.caption
+                            background: Rectangle {
+                                color: root.surface
+                                border.width: 1
+                                border.color: root.line
+                            }
                         }
                     }
+                }
 
-                    // ── Result ────────────────────────────────────────────
-                    Ui.PanelSectionHeader {
-                        visible: service.result !== null && !service.busy
-                        text: "RESULT"
-                        foreground: root.fg
-                        fontFamily: root.fontFamily
-                    }
-                    ResultView {
-                        Layout.fillWidth: true
-                        visible: service.result !== null && !service.busy
-                        result: service.result || ({})
-                        sourcePreview: preview.sourceUrl
-                        resultPreview: preview.resultUrl
-                        sourceLoading: preview.sourceLoading
-                        resultLoading: preview.resultLoading
-                        savings: (service.metadata && service.result) ? Model.savingsText(service.metadata.bytes, service.result.bytes) : ""
-                        trimText: (service.result && service.result.trim_start !== undefined && service.metadata) ? Model.trimLabel(service.result.trim_start, service.result.trim_end, service.metadata.duration) : ""
-                        sourceMeta: service.metadata ? Model.dimensionsText(service.metadata.width, service.metadata.height) : ""
-                        resultMeta: service.result ? Model.dimensionsText(service.result.width, service.result.height) : ""
-                        foreground: root.fg
-                        background: root.menuTheme.background
-                        accent: root.accent
-                        fontFamily: root.fontFamily
-                        fontSize: root.fonts.body
-                        radius: Style.cornerRadius
-                    }
-                    Flow {
-                        Layout.fillWidth: true
-                        visible: service.result !== null && !service.busy
-                        spacing: Style.space(6)
-                        ActionButton { iconText: "󰈔"; text: service.result && service.result.kind === "sequence" ? "Open frames" : "Open file"; onClicked: Qt.openUrlExternally(Model.fileUri(service.result.path)) }
-                        ActionButton { iconText: "󰉋"; text: "Open folder"; onClicked: Qt.openUrlExternally(Model.fileUri(service.result.path.substring(0, service.result.path.lastIndexOf("/")) || "/")) }
-                        ActionButton { iconText: "󰆏"; text: service.result && service.result.kind === "sequence" ? "Copy folder" : "Copy file"; onClicked: root.copy(Model.fileUri(service.result.path) + "\r\n", true) }
-                        ActionButton { iconText: "󰅍"; text: "Copy path"; onClicked: root.copy(service.result.path, false) }
-                    }
-                    ActionButton {
-                        visible: service.result !== null && !service.busy
-                        Layout.fillWidth: true
-                        implicitHeight: Style.space(36)
-                        iconText: "󰐕"
-                        text: "Convert another"
-                        selected: true
-                        onClicked: { service.result = null; service.metadata = null; service.inputPath = ""; service.phase = ""; root.clipboardStatus = ""; preview.clearAll(); choose.forceActiveFocus() }
-                    }
-
-                    // ── Status ────────────────────────────────────────────
-                    Text {
-                        textFormat: Text.PlainText
-                        Layout.fillWidth: true
-                        visible: root.staleInterface
-                        text: "󰀪  Interface v" + root.appVersion + " is running, but v" + service.backendVersion
-                              + " is installed. Run `omarchy restart shell` to load the update."
-                        color: root.urgent
-                        font.family: root.fontFamily
-                        font.pixelSize: root.fonts.bodySmall
-                        wrapMode: Text.WordWrap
-                    }
-                    Hint { text: "󰄬  " + root.clipboardStatus; visible: root.clipboardStatus !== ""; color: root.fg }
-                    Text {
-                        textFormat: Text.PlainText
-                        Layout.fillWidth: true
-                        text: "󰅚  " + service.error
-                        visible: service.error !== ""
-                        color: root.urgent
-                        font.family: root.fontFamily
-                        font.pixelSize: root.fonts.body
-                        font.bold: true
-                        wrapMode: Text.WordWrap
-                    }
-                    Hint { text: service.phase; visible: !service.busy && !service.result && text.indexOf("Cancelled") === 0; color: root.fg }
-                    // The gifsicle tip only matters when a GIF is about to be made.
-                    Hint { text: service.notice; visible: text !== "" && !service.busy && (text.indexOf("gifsicle") < 0 || (root.inputKind !== "image" && root.activeFormat === "GIF")) }
-                    ActionButton {
-                        id: detailsButton
-                        property bool checked: false
-                        visible: service.details !== ""
-                        bordered: false
-                        iconText: checked ? "󰅀" : "󰅂"
-                        text: "Details"
-                        onClicked: checked = !checked
-                    }
-                    TextArea {
-                        Layout.fillWidth: true
-                        Layout.maximumHeight: Style.space(120)
-                        visible: detailsButton.checked && service.details !== ""
-                        text: service.details
-                        readOnly: true
-                        selectByMouse: true
-                        wrapMode: TextEdit.WrapAnywhere
-                        color: root.dim
-                        font.family: root.fontFamily
-                        font.pixelSize: root.fonts.caption
-                        background: Ui.BorderSurface {
-                            color: Style.normalFillFor(root.fg, root.accent)
-                            borderSpec: Border.controlSpec("normal", root.fg, root.accent)
-                            radius: Style.cornerRadius
+                // ── Key bar: what the keys do right now ─────────────────
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: keyRow.implicitHeight + 14
+                    color: root.alpha(root.fg, 0.03)
+                    Rectangle { width: parent.width; height: 1; color: root.line }
+                    RowLayout {
+                        id: keyRow
+                        anchors.fill: parent
+                        anchors.leftMargin: 16
+                        anchors.rightMargin: 16
+                        spacing: 16
+                        Repeater {
+                            model: ({
+                                empty: [["⏎", "browse"], ["drop", "a file"]],
+                                recipes: [["↑↓", "choose"], ["⏎", "convert"], ["alt " + (root.matched.rows.length > 1 ? "1–" + Math.min(9, root.matched.rows.length) : "1"), "pick"], ["ctrl ,", "settings"]],
+                                settings: [["tab", "next field"], ["←→", "choose"], ["ctrl ⏎", "convert"]],
+                                converting: [],
+                                result: [["⏎", "open"], ["o", "folder"], ["c", "copy"], ["p", "path"], ["n", "another"]]
+                            })[root.screen] || []
+                            delegate: Row {
+                                id: keyHint
+                                required property var modelData
+                                spacing: 5
+                                Text {
+                                    textFormat: Text.PlainText
+                                    text: keyHint.modelData[0]
+                                    color: root.focusColor
+                                    font.family: root.fontFamily
+                                    font.pixelSize: root.px(0.833)
+                                    font.bold: true
+                                }
+                                Text {
+                                    textFormat: Text.PlainText
+                                    text: keyHint.modelData[1]
+                                    color: root.dim
+                                    font.family: root.fontFamily
+                                    font.pixelSize: root.px(0.833)
+                                }
+                            }
+                        }
+                        Item { Layout.fillWidth: true }
+                        Text {
+                            textFormat: Text.PlainText
+                            text: root.screen === "settings" ? "esc back to recipes" : (root.screen === "converting" ? "esc cancel" : "esc close")
+                            color: root.faint
+                            font.family: root.fontFamily
+                            font.pixelSize: root.px(0.833)
                         }
                     }
                 }

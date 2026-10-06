@@ -1,10 +1,12 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import "../services/Model.js" as Model
 
-// Result summary: measured size change, output stats and Before/After
-// thumbnails. Actions live in OmaConvert.qml so they can use the shell's
-// qs.Ui buttons; this view stays dependency-free and unit-testable.
+// Result summary: the measured size big, whether it fits the limit, what
+// changed, how much of the budget it used, and Before/After thumbnails.
+// Actions live in OmaConvert.qml (keyboard shortcuts); this view stays
+// dependency-free and unit-testable.
 ColumnLayout {
     id: root
     required property var result
@@ -16,86 +18,100 @@ ColumnLayout {
     property string trimText: ""
     property string sourceMeta: ""
     property string resultMeta: ""
+    property real sourceBytes: 0
+    property real limitBytes: 0
     property color foreground: "#cacccc"
     property color background: "#101315"
-    property color accent: "#cacccc"
+    property color accent: "#819890"
+    property color okColor: "#a5b5ab"
+    property color limitColor: "#f4e276"
     property string fontFamily: "monospace"
     property int fontSize: 12
     property int radius: 0
-    readonly property color dim: Qt.darker(foreground, 1.4)
-    spacing: 12
+    readonly property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.55)
+    readonly property color faint: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.32)
+    readonly property var sizeParts: Model.megabytes(root.result.bytes).split(" ")
+    readonly property bool fits: root.limitBytes > 0 && Number(root.result.bytes || 0) <= root.limitBytes
+    spacing: 14
 
-    // Output file card: name + measured stats + savings pill.
-    Rectangle {
+    ColumnLayout {
         Layout.fillWidth: true
-        implicitHeight: fileInfo.implicitHeight + 24
-        radius: root.radius
-        color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
-        border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.3)
-        border.width: 1
-        ColumnLayout {
-            id: fileInfo
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.margins: 12
-            spacing: 4
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
+        spacing: 4
+        Text {
+            textFormat: Text.PlainText
+            Layout.fillWidth: true
+            text: Model.name(root.result.path || "") + (root.result.kind === "sequence" ? "/" : "")
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Math.round(root.fontSize * 1.083)
+            elide: Text.ElideMiddle
+        }
+        RowLayout {
+            spacing: 10
+            Text {
+                textFormat: Text.PlainText
+                text: root.sizeParts[0] || ""
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Math.round(root.fontSize * 3.6)
+                font.bold: true
+            }
+            Text {
+                textFormat: Text.PlainText
+                Layout.alignment: Qt.AlignBottom
+                Layout.bottomMargin: 8
+                text: root.sizeParts[1] || ""
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Math.round(root.fontSize * 1.333)
+            }
+            Rectangle {
+                visible: root.fits || root.savings !== ""
+                Layout.alignment: Qt.AlignBottom
+                Layout.bottomMargin: 8
+                implicitWidth: badge.implicitWidth + 16
+                implicitHeight: badge.implicitHeight + 6
+                color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.22)
+                border.width: 1
+                border.color: root.accent
                 Text {
+                    id: badge
+                    anchors.centerIn: parent
                     textFormat: Text.PlainText
-                    Layout.fillWidth: true
-                    text: Model.name(root.result.path)
-                    color: root.foreground
+                    text: root.fits ? "✓ fits " + Model.sizeLabel(root.limitBytes) : root.savings
+                    color: root.okColor
                     font.family: root.fontFamily
-                    font.pixelSize: Math.round(root.fontSize * 1.083)
+                    font.pixelSize: Math.round(root.fontSize * 0.917)
                     font.bold: true
-                    elide: Text.ElideMiddle
                 }
-                Rectangle {
-                    visible: root.savings !== ""
-                    implicitWidth: savingsText.implicitWidth + 12
-                    implicitHeight: savingsText.implicitHeight + 4
-                    radius: root.radius
-                    color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.18)
-                    border.color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.6)
-                    border.width: 1
-                    Text {
-                        id: savingsText
-                        anchors.centerIn: parent
-                        textFormat: Text.PlainText
-                        text: root.savings
-                        color: root.accent
-                        font.family: root.fontFamily
-                        font.pixelSize: Math.round(root.fontSize * 0.917)
-                        font.bold: true
-                    }
-                }
-            }
-            Text {
-                textFormat: Text.PlainText
-                Layout.fillWidth: true
-                text: Model.megabytes(root.result.bytes) + "  ·  " + root.result.width + "×" + root.result.height
-                      + (root.result.fps ? "  ·  " + Number(root.result.fps).toFixed(1) + " fps" : "")
-                      + (root.result.colors ? "  ·  " + root.result.colors + " colors" : "")
-                      + (root.result.frames ? "  ·  " + root.result.frames + " frames" : "")
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Math.round(root.fontSize * 0.917)
-                wrapMode: Text.WordWrap
-            }
-            Text {
-                textFormat: Text.PlainText
-                Layout.fillWidth: true
-                text: root.trimText
-                visible: root.trimText !== ""
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Math.round(root.fontSize * 0.917)
-                wrapMode: Text.WordWrap
             }
         }
+        Text {
+            textFormat: Text.PlainText
+            Layout.fillWidth: true
+            text: [root.savings,
+                   root.result.width ? root.result.width + "×" + root.result.height : "",
+                   root.result.fps ? Number(root.result.fps).toFixed(1).replace(".0", "") + " fps" : "",
+                   root.result.colors ? root.result.colors + " colors" : "",
+                   root.result.frames ? root.result.frames + " frames" : "",
+                   root.trimText].filter(part => part !== "").join("  ·  ")
+            color: root.faint
+            font.family: root.fontFamily
+            font.pixelSize: Math.round(root.fontSize * 0.833)
+            wrapMode: Text.WordWrap
+        }
+    }
+    SizeBudget {
+        Layout.fillWidth: true
+        visible: root.limitBytes > 0
+        fromBytes: root.sourceBytes
+        limitBytes: root.limitBytes
+        resultBytes: Number(root.result.bytes || 0)
+        foreground: root.foreground
+        fillColor: root.accent
+        limitColor: root.limitColor
+        fontFamily: root.fontFamily
+        fontSize: root.fontSize
     }
     // Side by side on wide windows, stacked on narrow ones. Flow wraps
     // automatically once a child no longer fits next to its sibling.
@@ -104,30 +120,32 @@ ColumnLayout {
         Layout.fillWidth: true
         visible: root.sourcePreview !== "" || root.resultPreview !== ""
                  || root.sourceLoading || root.resultLoading
-        spacing: 12
+        spacing: 18
         PreviewImage {
             title: "Before"
             imageSource: root.sourcePreview
             loading: root.sourceLoading
             meta: root.sourceMeta
+            boxHeight: 144
             foreground: root.foreground
             background: root.background
             fontFamily: root.fontFamily
             fontSize: root.fontSize
             radius: root.radius
-            width: compareFlow.width >= 520 ? (compareFlow.width - compareFlow.spacing) / 2 : compareFlow.width
+            width: compareFlow.width >= 460 ? (compareFlow.width - compareFlow.spacing) / 2 : compareFlow.width
         }
         PreviewImage {
             title: "After"
             imageSource: root.resultPreview
             loading: root.resultLoading
             meta: root.resultMeta
+            boxHeight: 144
             foreground: root.foreground
             background: root.background
             fontFamily: root.fontFamily
             fontSize: root.fontSize
             radius: root.radius
-            width: compareFlow.width >= 520 ? (compareFlow.width - compareFlow.spacing) / 2 : compareFlow.width
+            width: compareFlow.width >= 460 ? (compareFlow.width - compareFlow.spacing) / 2 : compareFlow.width
         }
     }
 }
