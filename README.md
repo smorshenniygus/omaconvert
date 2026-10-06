@@ -43,11 +43,11 @@ The plugin bundles no binaries and installs nothing by itself.
 ## Using it
 
 1. **Choose a file.** Click the Source field, press Enter, drop a file onto it, or use Open With.
-2. **Pick a recipe** under **What to make**, or type in the line above the list. Up/Down choose and Enter converts.
-3. **Trim** a video with the two handles under the preview. The size limit applies to the trimmed part.
-4. **+** opens every field: Format, Mode, Max size, GIF preference, Quick quality, Frames and Save to. The fields and the command line stay in sync.
+2. **Trim** a video on the edit track under the preview. The preview follows the handle you move, and the size limit applies to the trimmed part.
+3. **Pick a recipe**, or type in the `❯` line above the list. The size bar shows the source against the limit, so you see how much has to go.
+4. **⚙ settings** (Ctrl+,) opens every field: format, mode, max size with presets (Discord 10 MB, X GIF 15 MB, email 25 MB, web 500 KB), GIF preference, quick quality, frame rate for sequences and the output folder. The fields and the line stay in sync, and **Will make** shows the file name you will get.
 
-After converting, you can open the file or its folder, copy the file or its path, or convert another file.
+While it converts, you see each size the search measured against the limit. Afterwards you get the measured size, whether it fits, Before/After thumbnails and keyed actions.
 
 What the command line understands:
 
@@ -62,7 +62,16 @@ What the command line understands:
 
 Russian words work too: `гифка`, `кадр`, `кадры`, `мб`, `кб`.
 
-Keyboard: Tab moves between controls. Esc cancels a running conversion, clears the line, or closes the window. Ctrl+Enter converts.
+Keyboard (the bar at the bottom of the window always shows the keys that work right now):
+
+| Where | Keys |
+|---|---|
+| Recipes | ↑↓ choose · Enter convert · Alt+1…9 run a recipe · Ctrl+, settings |
+| Settings | Tab next field · ←→ or h/l choose · Ctrl+Enter convert · Esc back to recipes |
+| Converting | Esc cancel |
+| Result | Enter open · O folder · C copy file · P copy path · N convert another |
+
+Esc otherwise clears the line or closes the window. If the window is fullscreen, it stays fullscreen after the file dialog closes.
 
 ### How Target Size works
 
