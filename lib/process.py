@@ -49,8 +49,11 @@ class ProcessRunner:
     def _terminate(self, process):
         self._signal_group(process, signal.SIGTERM)
 
+        # A stopped job's output is discarded, so FFmpeg gets only a short
+        # grace: on SIGTERM it would finish the current frame first, which
+        # takes seconds for a large still at maximum compression.
         def force_after_grace():
-            deadline = time.monotonic() + 3
+            deadline = time.monotonic() + 0.5
             while time.monotonic() < deadline:
                 try:
                     os.killpg(process.pid, 0)

@@ -877,7 +877,9 @@ Item {
                         }
                         SizeBudget {
                             Layout.fillWidth: true
-                            visible: root.idleWithFile && root.activeLimit > 0 && (service.metadata.bytes || 0) > 0
+                            // Always present with a file, so hovering recipes with
+                            // and without a limit never shifts the list.
+                            visible: root.idleWithFile && (service.metadata.bytes || 0) > 0
                             fromBytes: (service.metadata && service.metadata.bytes) || 0
                             limitBytes: root.activeLimit
                             foreground: root.fg
@@ -968,13 +970,14 @@ Item {
                                     }
                                 }
                             }
+                            // Always one row tall: typing never pushes the list down.
                             Flow {
                                 Layout.fillWidth: true
-                                visible: root.matched.chips.length > 0
                                 spacing: 6
                                 Text {
                                     textFormat: Text.PlainText
-                                    text: "understood"
+                                    text: root.matched.chips.length > 0 ? "understood"
+                                        : (root.inputKind === "image" ? "type a format and size  ·  jpg 200kb  ·  webp" : "type a format and size  ·  gif 10mb  ·  mp4 quick")
                                     color: root.faint
                                     font.family: root.fontFamily
                                     font.pixelSize: root.px(0.833)
@@ -1099,7 +1102,9 @@ Item {
                                             anchors.fill: parent
                                             hoverEnabled: true
                                             cursorShape: recipeRow.blocked ? Qt.ArrowCursor : Qt.PointingHandCursor
-                                            onEntered: root.selectedRow = recipeRow.index
+                                            // Only a moving pointer selects: a row sliding under a
+                                            // still cursor must not change the selection.
+                                            onPositionChanged: if (root.selectedRow !== recipeRow.index) root.selectedRow = recipeRow.index
                                             onClicked: root.runRecipe(recipeRow.index)
                                         }
                                     }
