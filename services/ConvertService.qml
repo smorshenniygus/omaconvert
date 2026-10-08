@@ -345,7 +345,11 @@ Item {
                 var lines = text.split("\n")
                 for (var i = 0; i < lines.length; i++) {
                     var event = Model.eventFromLine(lines[i])
-                    if (event && event.event === "open-with") root.openWith = event
+                    if (event && event.event === "open-with") {
+                        root.openWith = event
+                        // Refresh our own entry written by an older version.
+                        if (event.enabled && event.current === false) Qt.callLater(() => root.setOpenWith(true))
+                    }
                     else if (event && event.event === "error") root.openWithError = event.details || event.message
                 }
             }

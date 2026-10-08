@@ -135,7 +135,7 @@ class DesktopEntryTests(unittest.TestCase):
             self.assertEqual(self.open_with("status", data)[1][-1]["enabled"], False)
             code, events = self.open_with("on", data)
             self.assertEqual(code, 0)
-            self.assertEqual(events[-1], {"event": "open-with", "enabled": True, "path": str(entry)})
+            self.assertEqual(events[-1], {"event": "open-with", "enabled": True, "current": True, "path": str(entry)})
             text = entry.read_text()
             self.assertIn(f"Exec={ROOT}/bin/omaconvert-open %F", text)
             self.assertIn(f"TryExec={ROOT}/bin/omaconvert-open", text)
@@ -143,6 +143,17 @@ class DesktopEntryTests(unittest.TestCase):
             self.assertEqual(self.open_with("off", data)[1][-1]["enabled"], False)
             self.assertFalse(entry.exists())
             self.assertFalse((Path(config) / "mimeapps.list").exists())
+
+    def test_an_entry_from_before_batches_reports_outdated(self):
+        with tempfile.TemporaryDirectory() as data:
+            entry = Path(data) / f"applications/{launcher.PLUGIN_ID}.desktop"
+            self.open_with("on", data)
+            self.assertEqual(self.open_with("status", data)[1][-1]["current"], True)
+            entry.write_text(entry.read_text().replace(" %F", " %f"))
+            status = self.open_with("status", data)[1][-1]
+            self.assertEqual((status["enabled"], status["current"]), (True, False))
+            self.open_with("on", data)
+            self.assertIn(" %F\n", entry.read_text())
 
     def test_open_with_never_touches_a_foreign_entry(self):
         with tempfile.TemporaryDirectory() as data:

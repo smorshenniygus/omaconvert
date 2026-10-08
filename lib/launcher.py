@@ -140,7 +140,10 @@ def open_with_status():
     lines = _entry_lines(path)
     launcher = desktop_value(str(ROOT / "bin" / "omaconvert-open"))
     enabled = f"{OWNER_KEY}={PLUGIN_ID}" in lines and f"TryExec={launcher}" in lines
-    return {"enabled": enabled, "path": str(path)}
+    # Entries written before 1.2 passed one file (%f); a selection should
+    # open as one batch (%F). The window rewrites an outdated entry.
+    current = enabled and any(line.startswith("Exec=") and line.endswith(" %F") for line in lines)
+    return {"enabled": enabled, "current": current, "path": str(path)}
 
 
 def set_open_with(enabled):
