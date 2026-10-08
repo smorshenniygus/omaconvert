@@ -3,7 +3,7 @@
 // Version of the loaded interface. Kept equal to manifest.json and
 // lib/__init__.py by tests/test_version.py; compared at runtime with the
 // backend version to detect a shell still running stale cached QML.
-var VERSION = "1.1.0"
+var VERSION = "1.2.0"
 // Fallback when the host does not inject `manifest`; equal to manifest.json.
 var PLUGIN_ID = "io.github.smorshenniygus.omaconvert"
 
