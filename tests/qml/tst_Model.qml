@@ -227,4 +227,18 @@ TestCase {
         compare(Model.outputName("/v/a.mov", { format: "WebM", mode: "quick", size: "10", unit: "MB" }), "a.webm")
         compare(Model.outputName("/v/a.mov", { format: Model.SEQUENCE, mode: "quick" }), "a-frames/")
     }
+    function test_pinnedRecipesAndBatch() {
+        var short = { kind: "video", duration: 8, fps: 30 }
+        var rows = Model.recipes("video", short, null, "", 8, ["mp4 25mb", "gif 10mb"])
+        compare(rows.map(r => r.command).slice(0, 2), ["mp4 25mb", "gif 10mb"])
+        verify(rows[0].pinned && rows[1].pinned && !rows[2].pinned)
+        compare(rows.length, 5)
+        compare(Model.togglePinned(["gif 10mb"], "jpg 200kb"), ["gif 10mb", "jpg 200kb"])
+        compare(Model.togglePinned(["gif 10mb", "jpg 200kb"], "gif 10mb"), ["jpg 200kb"])
+        compare(Model.togglePinned(["a", "b", "c", "d", "e", "f"], "g"), ["b", "c", "d", "e", "f", "g"])
+        compare(Model.parsePinned("[\"gif 10mb\", 3]"), ["gif 10mb"])
+        compare(Model.parsePinned("oops"), [])
+        compare(Model.batchArguments(["/a.png", "/b c.png"], "jpg", "target", "200", "KB", "balanced", "balanced", "", null),
+                ["/a.png", "/b c.png", "--format", "jpg", "--preset", "balanced", "--preference", "balanced", "--max-size", "200KB"])
+    }
 }

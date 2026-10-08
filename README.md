@@ -47,6 +47,10 @@ The plugin bundles no binaries and installs nothing by itself.
 3. **Pick a recipe**, or type in the `❯` line above the list. The size bar shows the source against the limit, so you see how much has to go.
 4. **⚙ settings** (Ctrl+,) opens every field: format, mode, max size with presets (Discord 10 MB, X GIF 15 MB, email 25 MB, web 500 KB), GIF preference, quick quality, frame rate for sequences and the output folder. The fields and the line stay in sync, and **Will make** shows the file name you will get.
 
+**Several files at once.** Select files in the file manager and use Open With, drop or paste several files, or pick several in the dialog. They open as a **batch**: one list with each file's size, one recipe for all of them, converted one after another. A file that cannot be read is marked and skipped, and files of the other kind (videos in a batch of images) are left out. Trimming is for one video at a time.
+
+**Pin the recipes you use.** Ctrl+D (or ★ pin next to Convert in the settings) pins the highlighted recipe, such as `jpg 150kb` for your website. Pinned recipes are listed first for that kind of file, up to six of them. Ctrl+D again unpins.
+
 While it converts, you see each size the search measured against the limit. Afterwards you get the measured size, whether it fits, Before/After thumbnails and keyed actions.
 
 What the command line understands:
@@ -67,10 +71,10 @@ Keyboard (the bar at the bottom of the window always shows the keys that work ri
 | Where | Keys |
 |---|---|
 | Empty window | Enter browse · Ctrl+V paste |
-| Recipes | ↑↓ choose · Enter convert · Alt+1…9 run a recipe · Ctrl+, settings · Ctrl+V paste another file |
-| Settings | Tab next field · ←→ or h/l choose · Ctrl+Enter convert · Esc back to recipes |
+| Recipes | ↑↓ choose · Enter convert · Alt+1…9 run a recipe · Ctrl+D pin or unpin · Ctrl+, settings · Ctrl+V paste another file |
+| Settings | Tab next field · ←→ or h/l choose · Ctrl+D pin or unpin · Ctrl+Enter convert · Esc back to recipes |
 | Converting | Esc cancel |
-| Result | Enter open · O folder · C copy file · P copy path · N convert another |
+| Result | Enter open · O folder · C copy file · P copy path · N convert another (batch: Enter folder · C copy all · P all paths) |
 
 Esc otherwise clears the line or closes the window. If the window is fullscreen, it stays fullscreen after the file dialog closes.
 
@@ -110,6 +114,7 @@ omaconvert long.mp4 --format mp4 --max-size 20MB --trim-start 12.5 --trim-end 30
 omaconvert photo.png --format jpg --max-size 200KB --output-dir ~/Pictures/share
 omaconvert video.mov --format webm --preset small
 omaconvert video.mp4 --format png --sequence --sequence-fps 10
+omaconvert *.png --format jpg --max-size 200KB --output-dir ~/Pictures/web   # a batch
 omaconvert --capabilities      # which formats this FFmpeg can write
 ```
 

@@ -23,6 +23,12 @@ class PayloadTests(unittest.TestCase):
         payload = json.loads(launcher.payload_for("clip #1.mp4", cwd="/tmp/link dir"))
         self.assertEqual(payload["file"], "/tmp/link dir/clip #1.mp4")
 
+    def test_several_files_become_a_batch_payload(self):
+        payload = json.loads(launcher.payload_for_all(["a.png", "/tmp/b c.jpg", "file:///tmp/d.gif"], cwd="/home/u"))
+        self.assertEqual(payload, {"files": ["/home/u/a.png", "/tmp/b c.jpg", "file:///tmp/d.gif"]})
+        self.assertEqual(json.loads(launcher.payload_for_all(["/tmp/one.mp4"])), {"file": "/tmp/one.mp4"})
+        self.assertEqual(launcher.payload_for_all([]), "{}")
+
     def test_uris_pass_through_and_empty_shows_window(self):
         uri = "file:///tmp/a%20%231.mp4"
         self.assertEqual(json.loads(launcher.payload_for(uri))["file"], uri)
@@ -67,13 +73,14 @@ class OpenInShellTests(ShellStubMixin, unittest.TestCase):
             launcher.open_in_shell(["/tmp/a.mp4"], shell_command=stub)
         self.assertIn(f"omarchy plugin enable {launcher.PLUGIN_ID}", str(caught.exception))
 
-    def test_cli_wrapper_uses_first_file(self):
+    def test_cli_wrapper_passes_a_selection_as_one_batch(self):
         stub = self.make_stub()
         env = dict(os.environ, OMACONVERT_SHELL=stub)
-        completed = subprocess.run([str(ROOT / "bin/omaconvert-open"), AWKWARD, "/tmp/ignored.mp4"],
+        completed = subprocess.run([str(ROOT / "bin/omaconvert-open"), AWKWARD, "/tmp/second.mp4"],
                                    env=env, capture_output=True, text=True)
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(json.loads(self.calls()[0][3]), {"file": AWKWARD})
+        self.assertEqual(len(self.calls()), 1)
+        self.assertEqual(json.loads(self.calls()[0][3]), {"files": [AWKWARD, "/tmp/second.mp4"]})
 
 
 class DesktopEntryTests(unittest.TestCase):
@@ -95,12 +102,12 @@ class DesktopEntryTests(unittest.TestCase):
         keyfile.load_from_data(data, len(data.encode()), GLib.KeyFileFlags.NONE)
         value = keyfile.get_string("Desktop Entry", "Exec")
         # GLib expands field codes on the unescaped string, then shell-parses.
-        _ok, argv = GLib.shell_parse_argv(value.replace("%f", "FILE").replace("%%", "%"))
+        _ok, argv = GLib.shell_parse_argv(value.replace("%F", "FILE").replace("%%", "%"))
         self.assertEqual(argv, [self.COMMAND, "FILE"])
 
     def test_plain_path_is_unquoted_and_mime_types_listed(self):
         text = self.render("/home/u/.config/omarchy/plugins/omaconvert/bin/omaconvert-open")
-        self.assertIn("Exec=/home/u/.config/omarchy/plugins/omaconvert/bin/omaconvert-open %f\n", text)
+        self.assertIn("Exec=/home/u/.config/omarchy/plugins/omaconvert/bin/omaconvert-open %F\n", text)
         self.assertIn("TryExec=/home/u/.config/omarchy/plugins/omaconvert/bin/omaconvert-open\n", text)
         mime = next(line for line in text.splitlines() if line.startswith("MimeType="))
         for kind in ("video/mp4", "video/webm", "image/png", "image/jpeg"):
@@ -130,7 +137,7 @@ class DesktopEntryTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(events[-1], {"event": "open-with", "enabled": True, "path": str(entry)})
             text = entry.read_text()
-            self.assertIn(f"Exec={ROOT}/bin/omaconvert-open %f", text)
+            self.assertIn(f"Exec={ROOT}/bin/omaconvert-open %F", text)
             self.assertIn(f"TryExec={ROOT}/bin/omaconvert-open", text)
             self.assertEqual(self.open_with("status", data)[1][-1]["enabled"], True)
             self.assertEqual(self.open_with("off", data)[1][-1]["enabled"], False)

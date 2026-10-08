@@ -74,21 +74,20 @@ def paste():
                 try:
                     with open(target, "xb") as handle:
                         handle.write(data.stdout)
-                    return {"kind": "file", "path": str(target), "source": "image"}
+                    return {"kind": "file", "path": str(target), "paths": [str(target)], "source": "image"}
                 except FileExistsError:
                     continue
     if "text/uri-list" in types:
         uris = _run(["wl-paste", "--no-newline", "--type", "text/uri-list"])
-        for line in (uris.stdout.splitlines() if uris and uris.returncode == 0 else []):
-            path = _existing_file(line)
-            if path:
-                return {"kind": "file", "path": path, "source": "file"}
+        paths = [p for p in (_existing_file(line) for line in (uris.stdout.splitlines() if uris and uris.returncode == 0 else [])) if p]
+        if paths:
+            return {"kind": "file", "path": paths[0], "paths": paths, "source": "file"}
     if any(t.startswith("text/plain") for t in types):
         text = _run(["wl-paste", "--no-newline", "--type", "text/plain"])
         value = text.stdout if text and text.returncode == 0 else ""
         path = _existing_file(value)
         if path:
-            return {"kind": "file", "path": path, "source": "path"}
+            return {"kind": "file", "path": path, "paths": [path], "source": "path"}
         if value:
             return {"kind": "text", "text": value}
     return {"kind": "none"}

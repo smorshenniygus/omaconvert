@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .backend import convert, dependencies
+from .backend import convert, convert_batch, dependencies, probe_all
 from .errors import Cancelled, OmaConvertError
 from .events import EventSink
 from . import desktop, formats, launcher
@@ -22,7 +22,7 @@ class JsonArgumentParser(argparse.ArgumentParser):
 
 def build_parser():
     parser = JsonArgumentParser(prog="omaconvert", add_help=True)
-    parser.add_argument("input", nargs="?", help="input media file")
+    parser.add_argument("input", nargs="*", help="input media file; several files make a batch with one recipe")
     parser.add_argument("--format", type=str.lower, choices=formats.cli_choices(),
                         help="output format; jpeg and tif are accepted as jpg and tiff")
     parser.add_argument("--max-size", help="decimal size such as 50MB")
@@ -32,6 +32,8 @@ def build_parser():
     parser.add_argument("--preset", choices=("small", "balanced", "high"), default="balanced")
     parser.add_argument("--preference", choices=("motion", "balanced", "detail"), default="balanced")
     parser.add_argument("--probe", metavar="INPUT", help="probe media and exit")
+    parser.add_argument("--probe-all", action="store_true",
+                        help="probe every input (a probe-item event each) and exit")
     parser.add_argument("--preview", metavar="INPUT", help="generate a bounded PNG preview and exit")
     parser.add_argument("--preview-output", metavar="PATH", help="destination for --preview PNG")
     parser.add_argument("--preview-size", default=str(DEFAULT_EDGE),
@@ -102,6 +104,9 @@ def main(argv=None):
                 raise OmaConvertError("Could not ask FFmpeg which formats it supports.", str(exc))
             sink.emit("capabilities", **formats.capabilities(tools))
             return 0
+        if args.probe_all:
+            probe_all(runner, args.input)
+            return 0
         if args.probe:
             path = Path(args.probe).expanduser()
             if not path.is_file():
@@ -126,6 +131,8 @@ def main(argv=None):
                                        max_edge=edge, position=position)
             sink.emit("preview", **preview)
             return 0
+        if len(args.input) > 1 and args.output:
+            raise OmaConvertError("Several inputs need --output-dir, not --output.")
         if not args.input:
             raise OmaConvertError("An input file is required.")
         if not args.format:
@@ -156,7 +163,15 @@ def main(argv=None):
                 sequence_fps = float(args.sequence_fps)
             except (TypeError, ValueError):
                 raise OmaConvertError("--sequence-fps must be a number of frames per second.")
-        complete = convert(runner, args.input, args.format, args.output, requested_bytes,
+        if len(args.input) > 1:
+            if trim_start is not None or trim_end is not None:
+                raise OmaConvertError("Trimming applies to one video at a time.")
+            summary = convert_batch(runner, args.input, args.format, requested_bytes, args.preset,
+                                    args.preference, output_dir=args.output_dir, sequence=args.sequence,
+                                    sequence_fps=sequence_fps)
+            sink.emit("batch-complete", **summary)
+            return 0
+        complete = convert(runner, args.input[0], args.format, args.output, requested_bytes,
                            args.preset, args.preference, trim_start, trim_end,
                            output_dir=args.output_dir, sequence=args.sequence,
                            sequence_fps=sequence_fps)

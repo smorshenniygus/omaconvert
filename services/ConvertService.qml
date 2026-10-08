@@ -37,6 +37,15 @@ Item {
     property var openWith: null
     property string openWithError: ""
     property int lastExit: 0
+    // Batch: one entry per input while several files are open:
+    // {path, status: reading|queued|working|done|failed|skipped, ok, kind,
+    //  bytes, width, height, message, output, outputBytes}. Empty for one file.
+    property var batch: []
+    property string batchKind: ""
+    readonly property bool isBatch: batch.length > 1
+    property int batchCurrent: -1
+    // Paths sent with the running batch, in order: event index -> entry.
+    property var batchOrder: []
 
     property int nextGeneration: 0
     property var currentJob: null
@@ -69,6 +78,8 @@ Item {
         capabilitiesProcess.running = true
     }
     function beginProbe(path) {
+        batch = []
+        batchKind = ""
         inputPath = path
         metadata = null
         result = null
@@ -88,6 +99,54 @@ Item {
         }
         pendingSelection = ""
         beginProbe(path)
+    }
+    // Several paths open as a batch: every file is probed first; files of
+    // another kind than the first readable one are skipped.
+    function selectFiles(paths) {
+        var list = (paths || []).filter(p => !!p)
+        if (list.length <= 1) { if (list.length) selectFile(list[0]); return }
+        if (busy) { error = "Wait for the current task to finish, then open the files again."; return }
+        pendingSelection = ""
+        inputPath = list[0]
+        metadata = null
+        result = null
+        batchKind = ""
+        batchCurrent = -1
+        batch = list.map(path => ({ path: path, status: "reading" }))
+        phase = "Reading " + list.length + " files…"
+        launch(["--probe-all"].concat(list), "probe-all")
+    }
+    function batchPaths() {
+        return batch.filter(item => item.ok && item.status !== "skipped").map(item => item.path)
+    }
+    function updateBatch(index, fields) {
+        if (index < 0 || index >= batch.length) return
+        var copy = batch.slice()
+        copy[index] = Object.assign({}, copy[index], fields)
+        batch = copy
+    }
+    function convertBatch(format, mode, size, unit, preset, preference, outputDir, sequenceFps) {
+        if (busy || !metadata || !dependenciesReady) return
+        var paths = batchPaths()
+        if (paths.length === 0) return
+        var copy = batch.map(item => item.ok && item.status !== "skipped"
+            ? Object.assign({}, item, { status: "queued", message: "", output: "", outputBytes: 0 }) : item)
+        batch = copy
+        batchOrder = paths
+        batchCurrent = -1
+        result = null
+        candidate = null
+        candidates = []
+        startedAt = Date.now()
+        progress = 0
+        currentPass = 0
+        phase = "Converting " + paths.length + " files…"
+        launch(Model.batchArguments(paths, format, mode, size, unit, preset, preference, outputDir || "", sequenceFps), "batch")
+    }
+    function batchIndexOf(eventIndex) {
+        var path = batchOrder[eventIndex]
+        for (var i = 0; i < batch.length; i++) if (batch[i].path === path) return i
+        return -1
     }
     // outputDir: destination folder, or "" to save next to the source.
     // sequenceFps: null for one file; 0 or a rate for a PNG sequence folder.
@@ -121,8 +180,38 @@ Item {
             if (line.trim()) details = (details + "\n" + line).slice(-16000)
             return
         }
-        if (event.event === "probe") metadata = event
-        else if (event.event === "dependencies") {
+        if (event.event === "probe") { if (operation !== "batch") metadata = event }
+        else if (event.event === "probe-item") {
+            var readable = event.ok && (batchKind === "" || event.kind === batchKind)
+            updateBatch(event.index, event.ok
+                ? { ok: true, status: readable ? "queued" : "skipped", kind: event.kind, bytes: event.bytes,
+                    width: event.width, height: event.height, duration: event.duration,
+                    message: readable ? "" : (batchKind === "image" ? "skipped: not an image" : "skipped: not a video") }
+                : { ok: false, status: "failed", message: event.message || "Could not read this file." })
+            if (readable && batchKind === "") {
+                batchKind = event.kind
+                inputPath = batch[event.index].path
+                metadata = event
+            }
+        } else if (event.event === "item") {
+            batchCurrent = batchIndexOf(event.index)
+            updateBatch(batchCurrent, { status: "working" })
+            progress = 0
+            currentPass = 0
+            candidate = null
+            candidates = []
+        } else if (event.event === "item-complete") {
+            updateBatch(batchIndexOf(event.index), { status: "done", output: event.path, outputBytes: event.bytes })
+        } else if (event.event === "item-error") {
+            updateBatch(batchIndexOf(event.index), { status: "failed", message: event.message })
+        } else if (event.event === "batch-complete") {
+            job.terminalEvent = true
+            terminalEvent = true
+            batchCurrent = -1
+            result = event
+            progress = 1
+            phase = "Done"
+        } else if (event.event === "dependencies") {
             dependenciesReady = event.ok !== false
             if (event.version) backendVersion = String(event.version)
             notice = event.gifsicle === false ? "Tip: install gifsicle to make GIFs a little smaller." : ""
@@ -177,8 +266,11 @@ Item {
         if (nextPath) transitioning = true
         currentJob = null
         starting = false
+        if (operation === "batch")
+            batch = batch.map(item => item.status === "working" || item.status === "queued"
+                ? Object.assign({}, item, { status: "stopped" }) : item)
         if (wasCancelling && !result) phase = "Cancelled — your source is unchanged."
-        else if (!job.terminalEvent && (lastExit !== 0 || (operation === "convert" && !result)))
+        else if (!job.terminalEvent && (lastExit !== 0 || ((operation === "convert" || operation === "batch") && !result)))
             error = "The converter stopped unexpectedly. See Details and try again."
         cancelling = false
         pendingSelection = ""

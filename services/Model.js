@@ -21,7 +21,12 @@ function validSize(text) {
 }
 // sequenceFps: undefined/null for a single file; 0 (every frame) or a rate
 // writes a PNG sequence folder instead (format must be "png").
+// Inside other functions `arguments` is the JS arguments object, so the
+// implementation lives in cliArguments and this name stays for callers.
 function arguments(path, format, mode, size, unit, preset, preference, trimStart, trimEnd, duration, outputDir, sequenceFps) {
+    return cliArguments(path, format, mode, size, unit, preset, preference, trimStart, trimEnd, duration, outputDir, sequenceFps)
+}
+function cliArguments(path, format, mode, size, unit, preset, preference, trimStart, trimEnd, duration, outputDir, sequenceFps) {
     var args = [path, "--format", format, "--preset", preset, "--preference", preference]
     var sequence = sequenceFps !== undefined && sequenceFps !== null
     if (mode === "target" && !sequence) args.push("--max-size", size + unit)
@@ -391,26 +396,46 @@ function recipe(fields, kind, media, caps, seconds) {
 }
 
 // Up to four recipes for the opened file, the last used one first.
-function recipes(kind, media, caps, lastCommand, seconds) {
+function recipes(kind, media, caps, lastCommand, seconds, pinned) {
     var available = commandFormats(kind, caps)
-    var commands = (lastCommand ? [lastCommand] : []).concat(defaultCommands(kind, media))
+    var pins = pinned || []
+    var commands = pins.concat(lastCommand ? [lastCommand] : []).concat(defaultCommands(kind, media))
+    // Pinned recipes always fit; the usual four follow them.
+    var limit = Math.min(9, Math.max(4, pins.length + 3))
     var seen = {}, out = []
-    for (var i = 0; i < commands.length && out.length < 4; i++) {
+    for (var i = 0; i < commands.length && out.length < limit; i++) {
         var parsed = parseCommand(commands[i], kind, available)
         if (!parsed.fields.format || parsed.rest.length) continue
         var r = recipe(completeFields(parsed.fields, kind, media), kind, media, caps, seconds)
         if (seen[r.command]) continue
         seen[r.command] = true
-        r.last = i === 0 && !!lastCommand
+        r.pinned = i < pins.length
+        r.last = !r.pinned && i === pins.length && !!lastCommand
         out.push(r)
     }
     return out
 }
+// Pin or unpin a recipe command; at most six, the oldest drops off.
+var MAX_PINNED = 6
+function togglePinned(list, command) {
+    var current = (list || []).filter(c => c !== command)
+    if (current.length === (list || []).length) current.push(command)
+    return current.slice(-MAX_PINNED)
+}
+function parsePinned(text) {
+    try { var value = JSON.parse(text || "[]"); return Array.isArray(value) ? value.filter(c => typeof c === "string") : [] }
+    catch (_) { return [] }
+}
+// Arguments for a batch: every path first, then the one recipe (no trim).
+function batchArguments(paths, format, mode, size, unit, preset, preference, outputDir, sequenceFps) {
+    var args = cliArguments(paths[0], format, mode, size, unit, preset, preference, 0, 0, 0, outputDir, sequenceFps)
+    return [paths[0]].concat(paths.slice(1)).concat(args.slice(1))
+}
 
 // What the list shows for the typed text: matching recipes, plus the
 // typed request itself on top when it is not one of them.
-function matchRecipes(text, kind, media, caps, lastCommand, seconds) {
-    var list = recipes(kind, media, caps, lastCommand, seconds)
+function matchRecipes(text, kind, media, caps, lastCommand, seconds, pinned) {
+    var list = recipes(kind, media, caps, lastCommand, seconds, pinned)
     if (!String(text || "").trim()) return { rows: list, chips: [], note: "" }
     var available = commandFormats(kind, caps)
     var parsed = parseCommand(text, kind, available)

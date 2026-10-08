@@ -77,6 +77,14 @@ sys.stdout.buffer.write(data.encode("latin-1"))
         self.assertEqual(events[-1]["kind"], "file")
         self.assertEqual(events[-1]["path"], str(video))
 
+    def test_several_copied_files_are_all_returned(self):
+        files = [self.home / name for name in ("a.png", "b.png")]
+        for f in files:
+            f.write_bytes(b"x")
+        self.clipboard(["text/uri-list"], {"text/uri-list": "\r\n".join("file://" + str(f) for f in files)})
+        _code, events = self.run_cli("--paste")
+        self.assertEqual(events[-1]["paths"], [str(f) for f in files])
+
     def test_a_path_typed_as_text(self):
         photo = self.home / "photo.jpg"
         photo.write_bytes(b"x")

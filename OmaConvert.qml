@@ -78,13 +78,13 @@ Item {
     Component.onCompleted: {
         if (prefs.rememberFolder) root.outputFolder = prefs.savedFolder
     }
-    readonly property bool trimShown: service.metadata !== null && service.metadata.kind !== "image" && (service.metadata.duration || 0) > 0
+    readonly property bool trimShown: !service.isBatch && service.metadata !== null && service.metadata.kind !== "image" && (service.metadata.duration || 0) > 0
     readonly property bool sizeShown: root.modeIndex === 0 && root.formatValue !== Model.SEQUENCE
     // Seconds that will be converted: the trimmed part of a video.
     readonly property real convertSeconds: root.trimShown ? Math.max(0, trimBar.endTime - trimBar.startTime) : ((service.metadata && service.metadata.duration) || 0)
     readonly property string lastCommand: root.inputKind === "image" ? prefs.lastImageCommand : prefs.lastVideoCommand
     readonly property var matched: service.metadata
-        ? Model.matchRecipes(commandInput.text, root.inputKind, service.metadata, service.capabilities, root.lastCommand, root.convertSeconds)
+        ? Model.matchRecipes(commandInput.text, root.inputKind, service.metadata, service.capabilities, root.lastCommand, root.convertSeconds, root.pinned)
         : ({ rows: [], chips: [], note: "" })
     readonly property var fieldsRecipe: Model.recipe(root.currentFields(), root.inputKind, service.metadata, service.capabilities, root.convertSeconds)
     readonly property bool readyToConvert: !service.busy && !root.pickerBusy && service.metadata !== null && service.dependenciesReady && (!root.trimShown || trimBar.valid)
@@ -103,7 +103,7 @@ Item {
     property real clock: Date.now()
     readonly property bool idleWithFile: service.metadata !== null && !service.result && !service.busy
     readonly property string screen: service.result && !service.busy ? "result"
-        : (service.busy && service.operation === "convert" ? "converting"
+        : (service.busy && (service.operation === "convert" || service.operation === "batch") ? "converting"
         : (root.idleWithFile ? (root.advanced ? "settings" : "recipes") : "empty"))
     readonly property bool canRunSelected: root.readyToConvert && root.selectedRow < root.matched.rows.length && root.matched.rows[root.selectedRow].problem === ""
 
@@ -113,7 +113,11 @@ Item {
         window.visible = true
         var payload = {}
         try { payload = JSON.parse(payloadJson || "{}") } catch (_) {}
-        if (payload.file) {
+        if (payload.files && payload.files.length) {
+            var local = payload.files.map(f => Model.localPath(f)).filter(f => !!f)
+            if (local.length) service.selectFiles(local)
+            else service.error = "Choose local files, not remote URLs."
+        } else if (payload.file) {
             var requestedPath = Model.localPath(payload.file)
             if (requestedPath) service.selectFile(requestedPath)
             else service.error = "Choose a local file, not a remote URL."
@@ -187,7 +191,7 @@ Item {
         root.advanced = false
         root.selectedRow = 0
         commandInput.text = ""
-        var first = Model.recipes(root.inputKind, service.metadata, service.capabilities, root.lastCommand, root.convertSeconds)[0]
+        var first = Model.recipes(root.inputKind, service.metadata, service.capabilities, root.lastCommand, root.convertSeconds, root.pinned)[0]
         if (first) root.applyFields(first.fields)
         else if (root.formatOptions.indexOf(root.formatValue) < 0) root.formatValue = root.formatOptions[0] || ""
     }
@@ -236,11 +240,52 @@ Item {
         clipboardStatus = ""
         var useTrim = root.trimShown
         var sequence = root.formatValue === Model.SEQUENCE
+        if (service.isBatch) {
+            service.convertBatch(sequence ? "png" : root.formatValue.toLowerCase(), root.sizeShown ? "target" : "quick",
+                                 sizeInput.text, root.unitText, Model.PRESETS[root.presetIndex] || "balanced",
+                                 Model.PREFERENCES[root.preferenceIndex] || "balanced", root.outputFolder,
+                                 sequence ? root.sequenceFps : null)
+            return
+        }
         service.convert(sequence ? "png" : root.formatValue.toLowerCase(), root.sizeShown ? "target" : "quick",
                         sizeInput.text, root.unitText, Model.PRESETS[root.presetIndex] || "balanced",
                         Model.PREFERENCES[root.preferenceIndex] || "balanced",
                         useTrim ? trimBar.startTime : 0, useTrim ? trimBar.endTime : 0, root.outputFolder,
                         sequence ? root.sequenceFps : null)
+    }
+    // ── Pinned recipes: per kind, shown first ───────────────────────────
+    readonly property var pinned: Model.parsePinned(root.inputKind === "image" ? prefs.pinnedImage : prefs.pinnedVideo)
+    // The recipe Enter would run right now, as command words.
+    readonly property string activeCommand: root.advanced ? Model.commandText(root.currentFields(), root.inputKind)
+        : (root.selectedRow < root.matched.rows.length ? root.matched.rows[root.selectedRow].command : "")
+    readonly property bool activePinned: root.activeCommand !== "" && root.pinned.indexOf(root.activeCommand) >= 0
+    function togglePin() {
+        if (!root.activeCommand) return
+        var next = JSON.stringify(Model.togglePinned(root.pinned, root.activeCommand))
+        if (root.inputKind === "image") prefs.pinnedImage = next
+        else prefs.pinnedVideo = next
+    }
+    readonly property var batchReady: service.batch.filter(item => item.ok && item.status !== "skipped")
+    readonly property real batchBytes: root.batchReady.reduce((sum, item) => sum + (item.bytes || 0), 0)
+    readonly property int batchFinished: service.batch.filter(item => item.status === "done" || item.status === "failed" && item.ok).length
+    readonly property real batchProgress: root.batchReady.length
+        ? Math.min(1, (root.batchFinished + (service.batchCurrent >= 0 ? service.progress : 0)) / root.batchReady.length) : 0
+    function batchTitle() {
+        var n = root.batchReady.length
+        var word = service.batchKind === "image" ? (n === 1 ? "image" : "images") : (n === 1 ? "video" : "videos")
+        return n + " " + word + "  ·  " + Model.compactSize(root.batchBytes)
+    }
+    function batchNote() {
+        var skipped = service.batch.filter(item => item.status === "skipped").length
+        var unreadable = service.batch.filter(item => item.ok === false).length
+        var parts = []
+        if (skipped) parts.push(skipped + " skipped (other kind)")
+        if (unreadable) parts.push(unreadable + " unreadable")
+        return parts.join("  ·  ")
+    }
+    function batchFolder() {
+        var paths = service.result && service.result.paths ? service.result.paths : []
+        return paths.length ? Model.dirname(paths[0]) : ""
     }
     // ── Omarchy integration ─────────────────────────────────────────────
     property string pasteNote: ""
@@ -265,6 +310,8 @@ Item {
         if (prefs.offerRecordings) Quickshell.execDetached(["python3", service.executable, "--offer-recording", file])
     }
     function convertAnother() {
+        service.batch = []
+        service.batchKind = ""
         service.result = null
         service.metadata = null
         service.inputPath = ""
@@ -290,6 +337,9 @@ Item {
         // offered first the next time a file of that kind is opened.
         property string lastVideoCommand: ""
         property string lastImageCommand: ""
+        // Pinned recipe commands as JSON arrays, e.g. ["jpg 150kb"].
+        property string pinnedVideo: "[]"
+        property string pinnedImage: "[]"
         property alias modeIndex: root.modeIndex
         property alias sizeText: sizeInput.text
         property alias unitIndex: root.unitIndex
@@ -328,7 +378,7 @@ Item {
     Connections {
         target: service
         function onPasted(result) {
-            if (result.kind === "file") service.selectFile(result.path)
+            if (result.kind === "file") service.selectFiles(result.paths && result.paths.length ? result.paths : [result.path])
             else if (result.kind === "text" && root.idleWithFile) {
                 commandInput.insert(commandInput.cursorPosition, result.text)
                 root.commandEdited()
@@ -373,13 +423,13 @@ Item {
     // out of the long-running shell process entirely.
     Process {
         id: filePicker
-        command: [Model.localPath(Qt.resolvedUrl("bin/omaconvert-pick")), "--title", "Choose a video or image",
-                  "--extensions", Model.pickerExtensions(service.capabilities)]
+        command: [Model.localPath(Qt.resolvedUrl("bin/omaconvert-pick")), "--title", "Choose videos or images",
+                  "--multiple", "--extensions", Model.pickerExtensions(service.capabilities)]
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: {
-                var path = root.pathFromUri(text)
-                if (path) service.selectFile(path)
+                var paths = text.split("\n").map(line => root.pathFromUri(line)).filter(path => !!path)
+                if (paths.length) service.selectFiles(paths)
             }
         }
         // qmllint disable signal-handler-parameters
@@ -702,10 +752,14 @@ Item {
                     }
                 }
             }
-            Shortcut { sequences: ["Return", "Enter"]; enabled: root.screen === "result"; context: Qt.WindowShortcut; onActivated: Qt.openUrlExternally(Model.fileUri(service.result.path)) }
+            Shortcut { sequences: ["Return", "Enter"]; enabled: root.screen === "result"; context: Qt.WindowShortcut; onActivated: Qt.openUrlExternally(Model.fileUri(service.isBatch ? root.batchFolder() : service.result.path)) }
             Shortcut { sequence: "O"; enabled: root.screen === "result"; context: Qt.WindowShortcut; onActivated: root.openResultFolder() }
-            Shortcut { sequence: "C"; enabled: root.screen === "result"; context: Qt.WindowShortcut; onActivated: root.copy(Model.fileUri(service.result.path) + "\r\n", true) }
-            Shortcut { sequence: "P"; enabled: root.screen === "result"; context: Qt.WindowShortcut; onActivated: root.copy(service.result.path, false) }
+            Shortcut { sequence: "C"; enabled: root.screen === "result"; context: Qt.WindowShortcut
+                       onActivated: service.isBatch ? root.copy(service.result.paths.map(p => Model.fileUri(p)).join("\r\n") + "\r\n", true)
+                                                    : root.copy(Model.fileUri(service.result.path) + "\r\n", true) }
+            Shortcut { sequence: "P"; enabled: root.screen === "result"; context: Qt.WindowShortcut
+                       onActivated: root.copy(service.isBatch ? service.result.paths.join("\n") : service.result.path, false) }
+            Shortcut { sequence: "Ctrl+D"; enabled: root.screen === "recipes" || root.screen === "settings"; context: Qt.WindowShortcut; onActivated: root.togglePin() }
             Shortcut { sequence: "N"; enabled: root.screen === "result"; context: Qt.WindowShortcut; onActivated: root.convertAnother() }
             Timer {
                 interval: 1000
@@ -815,7 +869,7 @@ Item {
                         // ── Source ────────────────────────────────────────
                         Item {
                             id: choose
-                            visible: !service.result && root.screen !== "converting"
+                            visible: !service.result && root.screen !== "converting" && !service.isBatch
                             Layout.fillWidth: true
                             implicitHeight: service.inputPath ? sourceText.implicitHeight : emptyColumn.implicitHeight
                             enabled: !service.busy && !root.pickerBusy
@@ -923,9 +977,132 @@ Item {
                                 id: dropArea
                                 anchors.fill: parent
                                 onDropped: drop => {
-                                    if (!service.busy && drop.urls.length === 1) {
-                                        var path = Model.localPath(drop.urls[0])
-                                        if (path) { service.selectFile(path); drop.acceptProposedAction() }
+                                    if (service.busy) return
+                                    var paths = drop.urls.map(url => Model.localPath(url)).filter(path => !!path)
+                                    if (paths.length) { service.selectFiles(paths); drop.acceptProposedAction() }
+                                }
+                            }
+                        }
+                        // ── Batch: every file with its state ──────────────
+                        ColumnLayout {
+                            id: batchView
+                            Layout.fillWidth: true
+                            visible: service.isBatch
+                            spacing: 6
+                            RowLayout {
+                                Layout.fillWidth: true
+                                SectionLabel { text: "BATCH"; Layout.fillWidth: true }
+                                Text {
+                                    visible: !service.busy && !service.result
+                                    textFormat: Text.PlainText
+                                    text: "change"
+                                    color: batchChange.containsMouse ? root.fg : root.faint
+                                    font.family: root.fontFamily
+                                    font.pixelSize: root.px(0.917)
+                                    MouseArea {
+                                        id: batchChange
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.chooseVideo()
+                                    }
+                                }
+                            }
+                            Text {
+                                textFormat: Text.PlainText
+                                Layout.fillWidth: true
+                                text: root.batchReady.length ? root.batchTitle()
+                                    : (service.busy ? "Reading " + service.batch.length + " files…" : "None of these files can be read")
+                                color: root.fg
+                                font.family: root.fontFamily
+                                font.pixelSize: root.px(1.5)
+                                font.bold: true
+                            }
+                            Text {
+                                textFormat: Text.PlainText
+                                Layout.fillWidth: true
+                                // Always one line tall, so recipes do not move.
+                                text: (root.idleWithFile ? "each file  →  " + (root.activeLimit > 0 ? "≤ " + Model.sizeLabel(root.activeLimit) : "quality preset") : "")
+                                    + (root.batchNote() ? (root.idleWithFile ? "  ·  " : "") + root.batchNote() : "") || " "
+                                color: root.dim
+                                font.family: root.fontFamily
+                                font.pixelSize: root.px(0.917)
+                                elide: Text.ElideRight
+                            }
+                            Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: Math.min(batchRows.implicitHeight, 8 * 30) + 2
+                                color: "transparent"
+                                border.width: 1
+                                border.color: root.line
+                                clip: true
+                                Flickable {
+                                    id: batchFlick
+                                    anchors.fill: parent
+                                    anchors.margins: 1
+                                    contentHeight: batchRows.implicitHeight
+                                    interactive: contentHeight > height
+                                    boundsBehavior: Flickable.StopAtBounds
+                                    // Keep the file being converted in view.
+                                    contentY: service.batchCurrent < 0 ? contentY
+                                        : Math.max(0, Math.min(contentHeight - height, service.batchCurrent * 30 - height / 2))
+                                    Behavior on contentY { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                                    Column {
+                                        id: batchRows
+                                        width: batchFlick.width
+                                        Repeater {
+                                            model: service.batch
+                                            delegate: Rectangle {
+                                                id: batchRow
+                                                required property var modelData
+                                                required property int index
+                                                readonly property string phaseName: batchRow.modelData.status || "reading"
+                                                width: batchRows.width
+                                                height: 30
+                                                color: batchRow.phaseName === "working" ? root.alpha(root.focusColor, 0.08) : "transparent"
+                                                Rectangle { visible: batchRow.phaseName === "working"; width: 2; height: parent.height; color: root.focusColor }
+                                                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.alpha(root.fg, 0.06) }
+                                                RowLayout {
+                                                    anchors.fill: parent
+                                                    anchors.leftMargin: 12
+                                                    anchors.rightMargin: 12
+                                                    spacing: 10
+                                                    Text {
+                                                        Layout.preferredWidth: root.px(1)
+                                                        textFormat: Text.PlainText
+                                                        text: ({ reading: "…", queued: "·", working: "▸", done: "✓", failed: "✗", skipped: "–", stopped: "■" })[batchRow.phaseName] || "·"
+                                                        color: batchRow.phaseName === "done" ? root.mist : (batchRow.phaseName === "failed" ? root.urgent
+                                                             : (batchRow.phaseName === "working" ? root.focusColor : root.faint))
+                                                        font.family: root.fontFamily
+                                                        font.pixelSize: root.px(1)
+                                                        font.bold: true
+                                                    }
+                                                    Text {
+                                                        Layout.fillWidth: true
+                                                        textFormat: Text.PlainText
+                                                        text: Model.name(batchRow.modelData.path)
+                                                        color: batchRow.phaseName === "skipped" || batchRow.phaseName === "failed" && !batchRow.modelData.ok ? root.faint : root.fg
+                                                        font.family: root.fontFamily
+                                                        font.pixelSize: root.px(0.917)
+                                                        elide: Text.ElideMiddle
+                                                    }
+                                                    Text {
+                                                        Layout.maximumWidth: batchRows.width * 0.48
+                                                        textFormat: Text.PlainText
+                                                        text: batchRow.phaseName === "working" ? Math.round(service.progress * 100) + "%"
+                                                            : batchRow.phaseName === "done" ? Model.compactSize(batchRow.modelData.bytes) + "  →  " + Model.compactSize(batchRow.modelData.outputBytes)
+                                                            : batchRow.phaseName === "failed" || batchRow.phaseName === "skipped" ? (batchRow.modelData.message || batchRow.phaseName)
+                                                            : batchRow.phaseName === "stopped" ? "stopped"
+                                                            : batchRow.phaseName === "reading" ? "reading…"
+                                                            : Model.compactSize(batchRow.modelData.bytes)
+                                                        color: batchRow.phaseName === "failed" ? root.urgent : (batchRow.phaseName === "done" ? root.mist : root.dim)
+                                                        font.family: root.fontFamily
+                                                        font.pixelSize: root.px(0.833)
+                                                        elide: Text.ElideRight
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -967,7 +1144,7 @@ Item {
                         PreviewImage {
                             id: sourcePreview
                             Layout.fillWidth: true
-                            visible: root.idleWithFile && (preview.sourceUrl !== "" || preview.sourceLoading)
+                            visible: root.idleWithFile && !service.isBatch && (preview.sourceUrl !== "" || preview.sourceLoading)
                             title: "Preview"
                             showHeader: false
                             boxHeight: root.advanced ? 150 : Math.min(292, Math.round(width * 0.5625))
@@ -1008,7 +1185,7 @@ Item {
                             Layout.fillWidth: true
                             // Always present with a file, so hovering recipes with
                             // and without a limit never shifts the list.
-                            visible: root.idleWithFile && (service.metadata.bytes || 0) > 0
+                            visible: root.idleWithFile && !service.isBatch && (service.metadata.bytes || 0) > 0
                             fromBytes: (service.metadata && service.metadata.bytes) || 0
                             limitBytes: root.activeLimit
                             foreground: root.fg
@@ -1213,7 +1390,7 @@ Item {
                                             }
                                             Text {
                                                 textFormat: Text.PlainText
-                                                text: recipeRow.modelData.last ? "last used" : (recipeRow.modelData.custom ? "as typed" : "")
+                                                text: recipeRow.modelData.pinned ? "★ pinned" : (recipeRow.modelData.last ? "last used" : (recipeRow.modelData.custom ? "as typed" : ""))
                                                 visible: text !== ""
                                                 color: recipeRow.current ? root.fg : root.faint
                                                 font.family: root.fontFamily
@@ -1551,6 +1728,12 @@ Item {
                                                     wrapMode: Text.WordWrap
                                                 }
                                             }
+                                            TextButton {
+                                                key: "★"
+                                                label: root.activePinned ? "unpin" : "pin"
+                                                Accessible.name: root.activePinned ? "Unpin this recipe" : "Pin this recipe to the top of the list"
+                                                onClicked: root.togglePin()
+                                            }
                                             Rectangle {
                                                 id: convertButton
                                                 implicitWidth: convertRow.implicitWidth + 28
@@ -1601,6 +1784,7 @@ Item {
                             spacing: 16
                             PreviewImage {
                                 Layout.fillWidth: true
+                                visible: !service.isBatch
                                 title: "Source"
                                 showHeader: false
                                 boxHeight: 200
@@ -1618,7 +1802,7 @@ Item {
                                 Text {
                                     textFormat: Text.PlainText
                                     Layout.fillWidth: true
-                                    text: Model.name(service.inputPath) + "  →  " + root.jobCommand
+                                    text: (service.isBatch ? root.batchReady.length + " files" : Model.name(service.inputPath)) + "  →  " + root.jobCommand
                                     color: root.dim
                                     font.family: root.fontFamily
                                     font.pixelSize: root.px(0.917)
@@ -1628,6 +1812,7 @@ Item {
                                     textFormat: Text.PlainText
                                     Layout.fillWidth: true
                                     text: service.cancelling ? "Cancelling…"
+                                        : service.isBatch ? "File " + Math.min(root.batchReady.length, root.batchFinished + 1) + " of " + root.batchReady.length
                                         : (service.phase.indexOf("Finding") === 0 ? "Finding the best quality that fits" : service.phase)
                                     color: root.fg
                                     font.family: root.fontFamily
@@ -1644,7 +1829,8 @@ Item {
                                     Text {
                                         textFormat: Text.PlainText
                                         Layout.fillWidth: true
-                                        text: service.currentPass ? "pass " + service.currentPass : (service.phase.indexOf("Finding") === 0 ? "analysing samples" : "")
+                                        text: service.isBatch ? (service.batchCurrent >= 0 ? Model.name(service.batch[service.batchCurrent].path) : "")
+                                            : service.currentPass ? "pass " + service.currentPass : (service.phase.indexOf("Finding") === 0 ? "analysing samples" : "")
                                         color: root.mist
                                         font.family: root.fontFamily
                                         font.pixelSize: root.px(0.917)
@@ -1652,7 +1838,7 @@ Item {
                                     }
                                     Text {
                                         visible: !progressTrack.indeterminate
-                                        text: Math.round(service.progress * 100) + "%"
+                                        text: Math.round((service.isBatch ? root.batchProgress : service.progress) * 100) + "%"
                                         color: root.fg
                                         font.family: root.fontFamily
                                         font.pixelSize: root.px(0.917)
@@ -1661,7 +1847,7 @@ Item {
                                 }
                                 Rectangle {
                                     id: progressTrack
-                                    readonly property bool indeterminate: service.phase.indexOf("Finding") === 0
+                                    readonly property bool indeterminate: !service.isBatch && service.phase.indexOf("Finding") === 0
                                     Layout.fillWidth: true
                                     implicitHeight: 6
                                     color: root.alpha(root.fg, 0.08)
@@ -1670,7 +1856,7 @@ Item {
                                         visible: !progressTrack.indeterminate
                                         height: parent.height
                                         color: root.focusColor
-                                        width: parent.width * Math.max(0, Math.min(1, service.progress))
+                                        width: parent.width * Math.max(0, Math.min(1, service.isBatch ? root.batchProgress : service.progress))
                                         Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                                     }
                                     Rectangle {
@@ -1779,7 +1965,7 @@ Item {
                         // ── Result ────────────────────────────────────────
                         ResultView {
                             Layout.fillWidth: true
-                            visible: root.screen === "result"
+                            visible: root.screen === "result" && !service.isBatch
                             result: service.result || ({})
                             sourcePreview: preview.sourceUrl
                             resultPreview: preview.resultUrl
@@ -1799,9 +1985,64 @@ Item {
                             fontFamily: root.fontFamily
                             fontSize: root.fonts.body
                         }
+                        // Batch summary: the sizes before and after, what failed.
                         ColumnLayout {
                             Layout.fillWidth: true
-                            visible: root.screen === "result"
+                            visible: root.screen === "result" && service.isBatch
+                            spacing: 4
+                            RowLayout {
+                                spacing: 10
+                                Text {
+                                    textFormat: Text.PlainText
+                                    text: service.result ? Model.compactSize(service.result.bytes_after) : ""
+                                    color: root.fg
+                                    font.family: root.fontFamily
+                                    font.pixelSize: root.px(3.6)
+                                    font.bold: true
+                                }
+                                Rectangle {
+                                    Layout.alignment: Qt.AlignBottom
+                                    Layout.bottomMargin: 8
+                                    implicitWidth: batchBadge.implicitWidth + 16
+                                    implicitHeight: batchBadge.implicitHeight + 6
+                                    color: root.alpha(root.sage, 0.22)
+                                    border.width: 1
+                                    border.color: root.sage
+                                    Text {
+                                        id: batchBadge
+                                        anchors.centerIn: parent
+                                        textFormat: Text.PlainText
+                                        text: service.result ? "✓ " + service.result.done + " of " + service.result.total + " done" : ""
+                                        color: root.mist
+                                        font.family: root.fontFamily
+                                        font.pixelSize: root.px(0.917)
+                                        font.bold: true
+                                    }
+                                }
+                            }
+                            Text {
+                                textFormat: Text.PlainText
+                                Layout.fillWidth: true
+                                text: service.result ? Model.savingsText(service.result.bytes_before, service.result.bytes_after)
+                                    + (service.result.failed ? "  ·  " + service.result.failed + " failed" : "") : ""
+                                color: service.result && service.result.failed ? root.urgent : root.faint
+                                font.family: root.fontFamily
+                                font.pixelSize: root.px(0.917)
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            visible: root.screen === "result" && service.isBatch
+                            spacing: 0
+                            ActionRow { primary: true; glyph: "󰉋"; key: "⏎"; label: "Open the folder"; onTriggered: Qt.openUrlExternally(Model.fileUri(root.batchFolder())) }
+                            ActionRow { glyph: "󰆏"; key: "c"; label: "Copy all files to clipboard"; onTriggered: root.copy(service.result.paths.map(p => Model.fileUri(p)).join("\r\n") + "\r\n", true) }
+                            ActionRow { glyph: "󰅍"; key: "p"; label: "Copy all paths"; onTriggered: root.copy(service.result.paths.join("\n"), false) }
+                            ActionRow { glyph: "󰐕"; key: "n"; label: "Convert more"; onTriggered: root.convertAnother() }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            visible: root.screen === "result" && !service.isBatch
                             spacing: 0
                             ActionRow { primary: true; glyph: "󰈔"; key: "⏎"; label: service.result && service.result.kind === "sequence" ? "Open frames" : "Open file"; onTriggered: Qt.openUrlExternally(Model.fileUri(service.result.path)) }
                             ActionRow { glyph: "󰉋"; key: "o"; label: "Show in folder"; onTriggered: root.openResultFolder() }
@@ -1882,10 +2123,11 @@ Item {
                         Repeater {
                             model: ({
                                 empty: [["⏎", "browse"], ["ctrl v", "paste"], ["drop", "a file"]],
-                                recipes: [["↑↓", "choose"], ["⏎", "convert"], ["alt " + (root.matched.rows.length > 1 ? "1–" + Math.min(9, root.matched.rows.length) : "1"), "pick"], ["ctrl ,", "settings"]],
-                                settings: [["tab", "next field"], ["←→", "choose"], ["ctrl ⏎", "convert"]],
+                                recipes: [["↑↓", "choose"], ["⏎", "convert"], ["alt " + (root.matched.rows.length > 1 ? "1–" + Math.min(9, root.matched.rows.length) : "1"), "pick"], ["ctrl d", root.activePinned ? "unpin" : "pin"], ["ctrl ,", "settings"]],
+                                settings: [["tab", "next field"], ["←→", "choose"], ["ctrl d", root.activePinned ? "unpin" : "pin"], ["ctrl ⏎", "convert"]],
                                 converting: [],
-                                result: [["⏎", "open"], ["o", "folder"], ["c", "copy"], ["p", "path"], ["n", "another"]]
+                                result: service.isBatch ? [["⏎", "folder"], ["c", "copy all"], ["p", "paths"], ["n", "more"]]
+                                    : [["⏎", "open"], ["o", "folder"], ["c", "copy"], ["p", "path"], ["n", "another"]]
                             })[root.screen] || []
                             delegate: Row {
                                 id: keyHint

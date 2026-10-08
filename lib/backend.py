@@ -396,3 +396,60 @@ def convert(runner, input_path, fmt, output_path, requested_bytes, preset, prefe
         if getattr(exc, "errno", None) == 28:
             raise OmaConvertError("Conversion failed because the destination disk is full.", str(exc)) from exc
         raise OmaConvertError("Could not create the output file.", str(exc)) from exc
+
+
+def probe_all(runner, inputs):
+    """Describe every input before a batch: one probe-item event each, with
+    ok=False and a message for files that cannot be read."""
+    for index, raw in enumerate(inputs):
+        path = Path(raw).expanduser()
+        try:
+            if not path.is_file():
+                raise OmaConvertError("The file does not exist or is not a regular file.", str(path))
+            info = probe_media(path, runner)
+        except Cancelled:
+            raise
+        except OmaConvertError as exc:
+            runner.sink.emit("probe-item", index=index, ok=False, path=str(path),
+                             message=exc.message, details=exc.details)
+            continue
+        runner.sink.emit("probe-item", index=index, ok=True, **info.event_fields())
+
+
+def convert_batch(runner, inputs, fmt, requested_bytes, preset, preference,
+                  output_dir=None, sequence=False, sequence_fps=None):
+    """Convert several files with one recipe, one after another. A file that
+    fails is reported (item-error) and skipped; cancelling stops the batch.
+    Returns the summary for the final batch-complete event."""
+    total = len(inputs)
+    done = failed = 0
+    before = after = 0
+    outputs = []
+    for index, raw in enumerate(inputs):
+        runner.check_cancelled()
+        source = str(Path(raw).expanduser())
+        runner.sink.emit("item", index=index, total=total, path=source)
+        try:
+            result = convert(runner, source, fmt, None, requested_bytes, preset, preference,
+                             output_dir=output_dir, sequence=sequence, sequence_fps=sequence_fps)
+        except Cancelled:
+            raise
+        except OmaConvertError as exc:
+            failed += 1
+            runner.sink.emit("item-error", index=index, source=source, message=exc.message, details=exc.details)
+            continue
+        except Exception as exc:  # one odd file must not end the batch
+            failed += 1
+            runner.sink.emit("item-error", index=index, source=source,
+                             message="OmaConvert could not convert this file.", details=str(exc))
+            continue
+        done += 1
+        before += Path(source).stat().st_size
+        after += int(result.get("bytes") or 0)
+        outputs.append(result["path"])
+        runner.sink.emit("item-complete", index=index, source=source, **result)
+    if done == 0:
+        raise OmaConvertError("None of the files could be converted.", f"{failed} of {total} failed.")
+    return {"kind": "batch", "total": total, "done": done, "failed": failed,
+            "bytes_before": before, "bytes_after": after, "paths": outputs, "path": outputs[0]}
+

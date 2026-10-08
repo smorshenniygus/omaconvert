@@ -37,22 +37,30 @@ def payload_for(argument, cwd=None):
     window to reject with a readable message."""
     if argument is None or argument == "":
         return "{}"
+    return json.dumps({"file": _payload_value(argument, cwd)}, ensure_ascii=False)
+
+
+def _payload_value(argument, cwd=None):
     text = str(argument)
-    if text.startswith("file://"):
-        value = text
-    elif "://" in text:
-        value = text
-    else:
-        value = os.path.abspath(os.path.join(cwd or os.getcwd(), os.path.expanduser(text)))
-    return json.dumps({"file": value}, ensure_ascii=False)
+    if "://" in text:
+        return text
+    return os.path.abspath(os.path.join(cwd or os.getcwd(), os.path.expanduser(text)))
+
+
+def payload_for_all(arguments, cwd=None):
+    """One file keeps the {"file"} payload; several become {"files": [...]},
+    which the window opens as a batch."""
+    items = [a for a in (arguments or []) if a not in (None, "")]
+    if len(items) <= 1:
+        return payload_for(items[0] if items else None, cwd)
+    return json.dumps({"files": [_payload_value(a, cwd) for a in items]}, ensure_ascii=False)
 
 
 def open_in_shell(arguments, shell_command=None, cwd=None):
-    """Summon the window with the first file. One file per call: desktop
-    launchers use %f, which runs one instance per selected file."""
+    """Summon the window with the given files: one opens normally, several
+    open as a batch (the desktop entry passes the whole selection, %F)."""
     command = shell_command or os.environ.get("OMACONVERT_SHELL", "omarchy-shell")
-    first = arguments[0] if arguments else None
-    payload = payload_for(first, cwd)
+    payload = payload_for_all(arguments, cwd)
     completed = subprocess.run([command, "shell", "summon", PLUGIN_ID, payload],
                                stdin=subprocess.DEVNULL, capture_output=True, text=True)
     reply = (completed.stdout or "").strip()
@@ -86,7 +94,7 @@ def render_desktop_entry(template, open_command):
     TryExec makes launchers and file managers hide the entry once the plugin
     folder is gone, so removing the plugin never leaves a broken "Open With"."""
     filled = {
-        "Exec": desktop_value(exec_argument(open_command) + " %f"),
+        "Exec": desktop_value(exec_argument(open_command) + " %F"),
         "TryExec": desktop_value(str(open_command)),
         "MimeType": ";".join(MIME_TYPES) + ";",
         OWNER_KEY: desktop_value(PLUGIN_ID),
