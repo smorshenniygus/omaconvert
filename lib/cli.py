@@ -8,7 +8,7 @@ from . import __version__
 from .backend import convert, dependencies
 from .errors import Cancelled, OmaConvertError
 from .events import EventSink
-from . import formats, launcher
+from . import desktop, formats, launcher
 from .optimizer import parse_size
 from .preview import DEFAULT_EDGE, generate_preview
 from .probe import probe_media
@@ -46,6 +46,12 @@ def build_parser():
     parser.add_argument("--capabilities", action="store_true",
                         help="report which output formats this FFmpeg can write, as JSON, and exit")
     parser.add_argument("--version", action="store_true", help="print the backend version as JSON and exit")
+    parser.add_argument("--paste", action="store_true",
+                        help="report what the clipboard holds for the window (an image is saved to Pictures/OmaConvert)")
+    parser.add_argument("--hotkey", choices=("on", "off", "status"),
+                        help="add or remove the OmaConvert key binding in ~/.config/hypr/bindings.lua")
+    parser.add_argument("--offer-recording", metavar="PATH",
+                        help="notify that a finished screen recording can be shrunk in OmaConvert")
     parser.add_argument("--open-with", choices=("on", "off", "status"),
                         help="add or remove OmaConvert in file managers' Open With menu and app search")
     return parser
@@ -60,6 +66,19 @@ def main(argv=None):
         args = build_parser().parse_args(argv)
         if args.version:
             sink.emit("version", version=__version__)
+            return 0
+        if args.paste:
+            sink.emit("paste", **desktop.paste())
+            return 0
+        if args.hotkey:
+            try:
+                state = desktop.hotkey_status() if args.hotkey == "status" else desktop.set_hotkey(args.hotkey == "on")
+            except (OSError, RuntimeError) as exc:
+                raise OmaConvertError("Could not change the hotkey.", str(exc))
+            sink.emit("hotkey", **state)
+            return 0
+        if args.offer_recording:
+            sink.emit("recording-offer", **desktop.offer_recording(args.offer_recording))
             return 0
         if args.open_with:
             try:

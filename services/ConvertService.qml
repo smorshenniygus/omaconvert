@@ -187,6 +187,26 @@ Item {
         transitioning = false
     }
 
+    // Hotkey block in ~/.config/hypr/bindings.lua: null until asked, then
+    // {enabled, keys, free, available}. Changed only by the user.
+    property var hotkey: null
+    property string hotkeyError: ""
+    function loadHotkey() { runHotkey("status") }
+    function setHotkey(enabled) { runHotkey(enabled ? "on" : "off") }
+    function runHotkey(action) {
+        if (hotkeyProcess.running) return
+        hotkeyError = ""
+        hotkeyProcess.command = ["python3", executable, "--hotkey", action]
+        hotkeyProcess.running = true
+    }
+    // Ctrl+V: {kind: "file"|"text"|"none", path, text} arrives through pasted().
+    signal pasted(var result)
+    function paste() {
+        if (pasteProcess.running) return
+        pasteProcess.command = ["python3", executable, "--paste"]
+        pasteProcess.running = true
+    }
+
     // Like capabilities: independent of the job queue.
     function loadOpenWith() { runOpenWith("status") }
     function setOpenWith(enabled) { runOpenWith(enabled ? "on" : "off") }
@@ -195,6 +215,34 @@ Item {
         openWithError = ""
         openWithProcess.command = ["python3", executable, "--open-with", action]
         openWithProcess.running = true
+    }
+
+    Process {
+        id: hotkeyProcess
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                var lines = text.split("\n")
+                for (var i = 0; i < lines.length; i++) {
+                    var event = Model.eventFromLine(lines[i])
+                    if (event && event.event === "hotkey") root.hotkey = event
+                    else if (event && event.event === "error") root.hotkeyError = event.details || event.message
+                }
+            }
+        }
+    }
+    Process {
+        id: pasteProcess
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                var lines = text.split("\n")
+                for (var i = 0; i < lines.length; i++) {
+                    var event = Model.eventFromLine(lines[i])
+                    if (event && event.event === "paste") root.pasted(event)
+                }
+            }
+        }
     }
 
     Process {

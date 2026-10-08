@@ -121,6 +121,7 @@ Item {
         else if (!checked && !service.busy) { checked = true; service.check() }
         service.loadCapabilities()
         service.loadOpenWith()
+        service.loadHotkey()
         Qt.callLater(() => choose.forceActiveFocus())
     }
     // Fields <-> the command line. A recipe, the typed text and the "+"
@@ -241,6 +242,28 @@ Item {
                         useTrim ? trimBar.startTime : 0, useTrim ? trimBar.endTime : 0, root.outputFolder,
                         sequence ? root.sequenceFps : null)
     }
+    // ── Omarchy integration ─────────────────────────────────────────────
+    property string pasteNote: ""
+    // Ctrl+V: a screenshot or copied image becomes the source (saved under
+    // ~/Pictures/OmaConvert), so do a copied file or a path; plain text goes
+    // into the command line.
+    function pasteFromClipboard() {
+        if (service.busy || root.pickerBusy) return
+        root.pasteNote = ""
+        service.paste()
+    }
+    function prettyKeys(keys) {
+        return String(keys || "").split(" + ").map(k => k === "PERIOD" ? "." : (k.length > 1 ? k[0] + k.slice(1).toLowerCase() : k)).join("+")
+    }
+    // Omarchy writes the recording's file name here while it records and
+    // removes it once the video is finalized: the file going away is the end.
+    property string activeRecording: ""
+    function recordingEnded() {
+        if (!root.activeRecording) return
+        var file = root.activeRecording
+        root.activeRecording = ""
+        if (prefs.offerRecordings) Quickshell.execDetached(["python3", service.executable, "--offer-recording", file])
+    }
     function convertAnother() {
         service.result = null
         service.metadata = null
@@ -273,6 +296,7 @@ Item {
         property alias preferenceIndex: root.preferenceIndex
         property alias presetIndex: root.presetIndex
         property bool rememberFolder: false
+        property bool offerRecordings: true
         property string savedFolder: ""
     }
     ConvertService {
@@ -300,6 +324,34 @@ Item {
         onInputPathChanged: {
             if (!service.inputPath) preview.clearAll()
         }
+    }
+    Connections {
+        target: service
+        function onPasted(result) {
+            if (result.kind === "file") service.selectFile(result.path)
+            else if (result.kind === "text" && root.idleWithFile) {
+                commandInput.insert(commandInput.cursorPosition, result.text)
+                root.commandEdited()
+                commandInput.forceActiveFocus()
+            } else root.pasteNote = result.kind === "text"
+                ? "The clipboard holds text, not a file or an image."
+                : "Nothing to paste: copy an image, a screenshot or a file first."
+        }
+    }
+    FileView {
+        id: recordingMarker
+        // Overridable so tests never touch the real marker.
+        path: Quickshell.env("OMACONVERT_RECORDING_MARKER") || "/tmp/omarchy-screenrecord-filename"
+        watchChanges: false
+        printErrors: false
+        onLoaded: { var name = text().trim(); if (name) root.activeRecording = name }
+        onLoadFailed: root.recordingEnded()
+    }
+    Timer {
+        interval: 2000
+        repeat: true
+        running: true
+        onTriggered: recordingMarker.reload()
     }
     PreviewService {
         id: preview
@@ -466,6 +518,64 @@ Item {
             }
         }
     }
+    // Checkbox row: square mark + label; Space or a click toggles.
+    component CheckRow: Rectangle {
+        id: check
+        property bool checked: false
+        property string label: ""
+        property string detail: ""
+        signal toggled()
+        Layout.fillWidth: true
+        implicitHeight: checkRow.implicitHeight + 12
+        color: checkMouse.containsMouse ? root.surface : "transparent"
+        activeFocusOnTab: true
+        Accessible.role: Accessible.CheckBox
+        Accessible.name: check.label
+        Accessible.checked: check.checked
+        Keys.onSpacePressed: check.toggled()
+        Keys.onReturnPressed: check.toggled()
+        Keys.onEnterPressed: check.toggled()
+        RowLayout {
+            id: checkRow
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: 4
+            spacing: 10
+            Rectangle {
+                Layout.preferredWidth: 12
+                Layout.preferredHeight: 12
+                color: check.checked ? root.sage : "transparent"
+                border.width: 1
+                border.color: check.activeFocus ? root.focusColor : (check.checked ? root.sage : root.alpha(root.fg, 0.4))
+            }
+            Text {
+                textFormat: Text.PlainText
+                text: check.label
+                color: check.checked ? root.fg : root.dim
+                font.family: root.fontFamily
+                font.pixelSize: root.px(1)
+                font.bold: check.checked
+            }
+            Text {
+                textFormat: Text.PlainText
+                visible: text !== ""
+                text: check.detail
+                color: root.focusColor
+                font.family: root.fontFamily
+                font.pixelSize: root.px(1)
+                font.bold: true
+            }
+            Item { Layout.fillWidth: true }
+        }
+        MouseArea {
+            id: checkMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: { check.forceActiveFocus(); check.toggled() }
+        }
+    }
     // Result action: icon, label, key on the right; the first one is primary.
     component ActionRow: Rectangle {
         id: act
@@ -565,6 +675,12 @@ Item {
                 enabled: root.opened && window.visible && !root.pickerBusy && (root.advanced ? root.canConvert : root.canRunSelected)
                 context: Qt.WindowShortcut
                 onActivated: root.advanced ? root.startConversion() : root.runRecipe(root.selectedRow)
+            }
+            Shortcut {
+                sequences: [StandardKey.Paste]
+                enabled: root.opened && window.visible && !service.busy && root.screen !== "settings"
+                context: Qt.WindowShortcut
+                onActivated: root.pasteFromClipboard()
             }
             Shortcut {
                 sequence: "Ctrl+,"
@@ -788,7 +904,7 @@ Item {
                                         Text {
                                             Layout.alignment: Qt.AlignHCenter
                                             textFormat: Text.PlainText
-                                            text: "⏎ browse  ·  or drop a file here"
+                                            text: "⏎ browse  ·  drop a file  ·  ctrl+v paste"
                                             color: root.faint
                                             font.family: root.fontFamily
                                             font.pixelSize: root.px(0.917)
@@ -814,24 +930,36 @@ Item {
                                 }
                             }
                         }
-                        // Opt-in desktop entry; offered only before a file is chosen.
+                        // Omarchy integration, offered before a file is chosen.
+                        // Each switch is opt-in and undone the same way.
                         ColumnLayout {
                             Layout.fillWidth: true
-                            visible: !service.inputPath && !service.result && service.openWith !== null
-                            spacing: 4
-                            ActionButton {
-                                bordered: false
-                                iconText: service.openWith && service.openWith.enabled ? "󰄲" : "󰄱"
-                                text: "Show in Open With and app search"
-                                selected: !!(service.openWith && service.openWith.enabled)
-                                Accessible.name: "Show OmaConvert in Open With and app search"
-                                onClicked: service.setOpenWith(!(service.openWith && service.openWith.enabled))
+                            visible: !service.inputPath && !service.result
+                            spacing: 2
+                            SectionLabel { text: "OMARCHY"; Layout.bottomMargin: 4 }
+                            CheckRow {
+                                visible: service.openWith !== null
+                                checked: !!(service.openWith && service.openWith.enabled)
+                                label: "Show in Open With and app search"
+                                onToggled: service.setOpenWith(!checked)
+                            }
+                            CheckRow {
+                                visible: !!(service.hotkey && service.hotkey.available && (service.hotkey.enabled || service.hotkey.free))
+                                checked: !!(service.hotkey && service.hotkey.enabled)
+                                label: "Hotkey"
+                                detail: root.prettyKeys(service.hotkey ? (service.hotkey.keys || service.hotkey.free) : "")
+                                onToggled: service.setHotkey(!checked)
+                            }
+                            CheckRow {
+                                checked: prefs.offerRecordings
+                                label: "Offer to shrink screen recordings over 10 MB"
+                                onToggled: prefs.offerRecordings = !prefs.offerRecordings
                             }
                             Hint {
-                                visible: text !== ""
-                                text: service.openWithError !== "" ? service.openWithError
-                                    : "Adds OmaConvert to your file manager's Open With menu for videos and images. Default apps are not changed."
-                                color: service.openWithError !== "" ? root.urgent : root.dim
+                                Layout.topMargin: 4
+                                text: service.openWithError || service.hotkeyError
+                                    || "The hotkey is a marked line in ~/.config/hypr/bindings.lua. A recording over 10 MB gets a notification that opens it here."
+                                color: service.openWithError || service.hotkeyError ? root.urgent : root.faint
                             }
                         }
 
@@ -915,6 +1043,9 @@ Item {
                                     placeholderText: root.inputKind === "image" ? "webp  ·  png 500kb  ·  jpg" : "gif 30mb  ·  mp4 quick  ·  png frames 10fps"
                                     Accessible.name: "What to make, for example gif 30mb"
                                     onTextEdited: root.commandEdited()
+                                    Keys.onPressed: event => {
+                                        if (event.matches(StandardKey.Paste)) { root.pasteFromClipboard(); event.accepted = true }
+                                    }
                                     Keys.onUpPressed: event => { root.moveSelection(-1); event.accepted = true }
                                     Keys.onDownPressed: event => { root.moveSelection(1); event.accepted = true }
                                     Keys.onReturnPressed: event => root.commandReturn(event)
@@ -1692,6 +1823,7 @@ Item {
                             wrapMode: Text.WordWrap
                         }
                         Hint { text: "󰄬  " + root.clipboardStatus; visible: root.clipboardStatus !== ""; color: root.fg }
+                        Hint { text: root.pasteNote; visible: root.pasteNote !== "" && !service.busy; color: root.fg }
                         Text {
                             textFormat: Text.PlainText
                             Layout.fillWidth: true
@@ -1749,7 +1881,7 @@ Item {
                         spacing: 16
                         Repeater {
                             model: ({
-                                empty: [["⏎", "browse"], ["drop", "a file"]],
+                                empty: [["⏎", "browse"], ["ctrl v", "paste"], ["drop", "a file"]],
                                 recipes: [["↑↓", "choose"], ["⏎", "convert"], ["alt " + (root.matched.rows.length > 1 ? "1–" + Math.min(9, root.matched.rows.length) : "1"), "pick"], ["ctrl ,", "settings"]],
                                 settings: [["tab", "next field"], ["←→", "choose"], ["ctrl ⏎", "convert"]],
                                 converting: [],

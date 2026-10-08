@@ -42,7 +42,7 @@ The plugin bundles no binaries and installs nothing by itself.
 
 ## Using it
 
-1. **Choose a file.** Click the Source field, press Enter, drop a file onto it, or use Open With.
+1. **Choose a file.** Click the Source field, press Enter, drop a file onto it, use Open With, or press **Ctrl+V**: a screenshot or copied image (saved to `~/Pictures/OmaConvert/`), a file copied in the file manager or a path all open as the source.
 2. **Trim** a video on the edit track under the preview. The preview follows the handle you move, and the size limit applies to the trimmed part.
 3. **Pick a recipe**, or type in the `❯` line above the list. The size bar shows the source against the limit, so you see how much has to go.
 4. **⚙ settings** (Ctrl+,) opens every field: format, mode, max size with presets (Discord 10 MB, X GIF 15 MB, email 25 MB, web 500 KB), GIF preference, quick quality, frame rate for sequences and the output folder. The fields and the line stay in sync, and **Will make** shows the file name you will get.
@@ -66,12 +66,23 @@ Keyboard (the bar at the bottom of the window always shows the keys that work ri
 
 | Where | Keys |
 |---|---|
-| Recipes | ↑↓ choose · Enter convert · Alt+1…9 run a recipe · Ctrl+, settings |
+| Empty window | Enter browse · Ctrl+V paste |
+| Recipes | ↑↓ choose · Enter convert · Alt+1…9 run a recipe · Ctrl+, settings · Ctrl+V paste another file |
 | Settings | Tab next field · ←→ or h/l choose · Ctrl+Enter convert · Esc back to recipes |
 | Converting | Esc cancel |
 | Result | Enter open · O folder · C copy file · P copy path · N convert another |
 
 Esc otherwise clears the line or closes the window. If the window is fullscreen, it stays fullscreen after the file dialog closes.
+
+### Omarchy integration
+
+The empty window has three switches. Each is off until you turn it on, except the last one, and each is undone the same way.
+
+- **Show in Open With and app search** adds OmaConvert to your file manager's Open With menu.
+- **Hotkey** adds one marked line to `~/.config/hypr/bindings.lua` on the first free combination (`Super+Shift+.` if it is free) and reloads Hyprland. Switching it off removes exactly that line.
+- **Offer to shrink screen recordings over 10 MB** (on by default) watches for the end of an Omarchy screen recording. If the video is over 10 MB, a notification offers to open it in OmaConvert.
+
+Screenshots need no switch: Omarchy puts them on the clipboard, so `Print Screen`, the OmaConvert hotkey, `Ctrl+V`, `jpg 200kb`, `c` is the whole round trip.
 
 ### How Target Size works
 
@@ -84,6 +95,8 @@ The tool aims at 97% of the limit. MP4 and WebM use two-pass encoding with a cor
 - Preferences: `~/.config/omaconvert/preferences.ini`. It stores the last recipe and other settings, plus the output folder only if you ask it to remember it. File names are never saved.
 - Preview thumbnails: `~/.cache/omaconvert/previews`, at most two small PNGs.
 - Only after you switch on Open With: `~/.local/share/applications/io.github.smorshenniygus.omaconvert.desktop`. Switching it off removes the file.
+- Only after you switch on the hotkey: a block between `-- >>> OmaConvert hotkey` and `-- <<< OmaConvert hotkey` in `~/.config/hypr/bindings.lua`.
+- Pasted images: `~/Pictures/OmaConvert/pasted-<date>.png`. To spot the end of a screen recording it reads Omarchy's `/tmp/omarchy-screenrecord-filename` every two seconds; it never touches the recording.
 
 No root access or package installation is needed.
 
