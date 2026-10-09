@@ -1,3 +1,5 @@
+import ctypes
+import functools
 import os
 import signal
 import subprocess
@@ -13,6 +15,28 @@ PROBE_TIMEOUT = 120.0
 # not advance for this long, the encoder is considered stuck. Override with
 # OMACONVERT_STALL_TIMEOUT (seconds, 0 disables) for unusual hardware.
 DEFAULT_STALL_TIMEOUT = 300.0
+
+
+_PR_SET_PDEATHSIG = 1
+try:
+    _prctl = ctypes.CDLL(None, use_errno=True).prctl
+    _prctl.argtypes = (ctypes.c_int,) + (ctypes.c_ulong,) * 4
+except (OSError, AttributeError):
+    _prctl = None
+
+
+def _die_with_parent(parent):
+    """Runs in the child before exec: SIGKILL it when the backend dies.
+
+    The window kills the backend outright when the shell reloads. Tools run
+    in their own session (for killpg) and FFmpeg ignores SIGPIPE, so they
+    would otherwise keep encoding for minutes into a folder nobody cleans.
+    Popen runs on the main thread, whose exit is what triggers the signal."""
+    if _prctl is None:
+        return
+    _prctl(_PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
+    if os.getppid() != parent:  # the backend died before prctl took effect
+        os.kill(os.getpid(), signal.SIGKILL)
 
 
 def stall_timeout():
@@ -93,6 +117,7 @@ class ProcessRunner:
                 text=True,
                 errors="replace",
                 start_new_session=True,
+                preexec_fn=functools.partial(_die_with_parent, os.getpid()),
             )
         except OSError as exc:
             raise ProcessFailed("Could not start a required media tool.", str(exc)) from exc

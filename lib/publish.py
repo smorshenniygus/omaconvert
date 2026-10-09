@@ -1,12 +1,76 @@
+from contextlib import contextmanager
 import ctypes
 import errno
+import fcntl
 import os
 from pathlib import Path
 import shutil
+import tempfile
+
+WORK_PREFIX = ".omaconvert-"
+_LOCK = ".lock"
 
 # link(2) errors meaning "this filesystem has no hard links" (FAT/exFAT,
 # many network and FUSE mounts), as opposed to a real failure.
 _NO_HARDLINKS = {errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.ENOSYS}
+
+
+@contextmanager
+def work_directory(parent):
+    """A hidden working folder in `parent`, on the result's filesystem so
+    publishing is a link or a rename. It is locked while in use: a folder
+    left by a backend that was killed (no cleanup ran) has a lock nobody
+    holds, and the next conversion into the same folder removes it."""
+    remove_abandoned(parent)
+    directory = tempfile.mkdtemp(prefix=WORK_PREFIX, dir=parent)
+    lock = None
+    try:
+        lock = _hold_lock(directory)
+        yield directory
+    finally:
+        # Removed while still locked, so a sweep never races this cleanup.
+        shutil.rmtree(directory, ignore_errors=True)
+        if lock is not None:
+            os.close(lock)
+
+
+def _hold_lock(directory):
+    """Lock a new file, then give it the name sweeps look for, so `.lock`
+    is never seen unlocked while its owner lives. None where the filesystem
+    has no flock; such a folder is then never swept."""
+    pending = os.path.join(directory, _LOCK + "-new")
+    fd = os.open(pending, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        os.rename(pending, os.path.join(directory, _LOCK))
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def remove_abandoned(parent):
+    """Delete our working folders in `parent` whose owner is gone. Folders
+    in use, without a lock (older versions) or not ours are left alone."""
+    try:
+        names = [name for name in os.listdir(parent) if name.startswith(WORK_PREFIX)]
+    except OSError:
+        return
+    for name in names:
+        folder = os.path.join(parent, name)
+        try:
+            info = os.lstat(folder)
+            fd = os.open(os.path.join(folder, _LOCK), os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError:
+            continue
+        try:
+            if info.st_uid == os.getuid() and os.path.isdir(folder) and not os.path.islink(folder):
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                shutil.rmtree(folder, ignore_errors=True)
+        except OSError:
+            pass  # still in use (or no flock here)
+        finally:
+            os.close(fd)
 
 
 def _candidate(base, number):

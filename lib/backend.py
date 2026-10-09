@@ -4,7 +4,6 @@ from dataclasses import replace
 from pathlib import Path
 import shutil
 import subprocess
-import tempfile
 
 from .color import sdr_filter
 from .encoders import (
@@ -16,7 +15,7 @@ from . import formats
 from .formats import IMAGE_FORMATS, VIDEO_FORMATS
 from .optimizer import build_gif_profiles, representative_samples, size_text
 from .probe import probe_media
-from .publish import publish_folder_no_clobber, publish_no_clobber
+from .publish import publish_folder_no_clobber, publish_no_clobber, work_directory
 
 
 
@@ -229,7 +228,7 @@ def _convert_sequence(runner, input_path, work, parent, seek, clip, sequence_fps
     if not os.access(parent, os.W_OK | os.X_OK):
         raise OmaConvertError("The output folder is not writable.", str(parent))
     try:
-        with tempfile.TemporaryDirectory(prefix=".omaconvert-", dir=parent) as directory:
+        with work_directory(parent) as directory:
             frames_dir = Path(directory) / "frames"
             count, rate = encode_png_sequence(runner, input_path, frames_dir, work,
                                               sequence_fps, seek, clip)
@@ -346,7 +345,7 @@ def convert(runner, input_path, fmt, output_path, requested_bytes, preset, prefe
         raise OmaConvertError("The output folder is not writable.", str(parent))
     gifsicle = shutil.which("gifsicle")
     try:
-        with tempfile.TemporaryDirectory(prefix=".omaconvert-", dir=parent) as directory:
+        with work_directory(parent) as directory:
             temp_output = Path(directory) / f"result.{fmt}"
             if fmt in IMAGE_FORMATS and (fmt != "gif" or info.kind == "image"):
                 if requested_bytes:
