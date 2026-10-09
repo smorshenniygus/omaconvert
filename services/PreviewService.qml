@@ -6,6 +6,10 @@ import "Model.js" as Model
 
 // Async bounded previews (DEV-04). Each slot writes to one fixed cache file
 // so temp previews never accumulate: at most src-preview.png + res-preview.png.
+// The files are owner-only (0600 in a 0700 folder) and are deleted as soon as
+// the preview is cleared or the window closes; leftovers from an earlier
+// session are deleted at start. Deletion runs on the slot's own Process, so
+// it can never race a newer preview of the same slot.
 // Generation counters discard stale completions after the input changes.
 Item {
     id: root
@@ -76,6 +80,12 @@ Item {
                              "--preview-output", root.resultPath, "--preview-size", "320"]
         resultJob.running = true
     }
+    function forget(job, path) {
+        if (!root.executable) return
+        if (job.running) job.running = false
+        job.command = ["python3", root.executable, "--forget-preview", path]
+        job.running = true
+    }
     function clearSource() {
         lastSourceInput = ""
         shownSourcePath = ""
@@ -84,7 +94,8 @@ Item {
         sourceWidth = 0
         sourceHeight = 0
         sourceLoading = false
-        if (sourceJob.running) sourceJob.running = false
+        sourceJob.generation = sourceGeneration
+        forget(sourceJob, root.sourcePath)
     }
     function clearResult() {
         lastResultInput = ""
@@ -93,7 +104,8 @@ Item {
         resultWidth = 0
         resultHeight = 0
         resultLoading = false
-        if (resultJob.running) resultJob.running = false
+        resultJob.generation = resultGeneration
+        forget(resultJob, root.resultPath)
     }
     function clearAll() { clearSource(); clearResult() }
 
@@ -152,6 +164,7 @@ Item {
         }
         // qmllint enable signal-handler-parameters
     }
+    Component.onCompleted: clearAll()
     Component.onDestruction: {
         if (sourceJob.running) sourceJob.running = false
         if (resultJob.running) resultJob.running = false

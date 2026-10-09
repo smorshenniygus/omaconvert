@@ -10,7 +10,7 @@ from .errors import Cancelled, OmaConvertError
 from .events import EventSink
 from . import desktop, formats, launcher
 from .optimizer import parse_size
-from .preview import DEFAULT_EDGE, generate_preview
+from .preview import DEFAULT_EDGE, forget_preview, generate_preview
 from .probe import probe_media
 from .process import ProcessRunner
 
@@ -39,6 +39,8 @@ def build_parser():
     parser.add_argument("--preview-size", default=str(DEFAULT_EDGE),
                         help="preview longest edge in pixels (64-640, default 320)")
     parser.add_argument("--preview-position", help="preview seek position in seconds")
+    parser.add_argument("--forget-preview", metavar="PATH", action="append",
+                        help="delete a cached window preview (src-preview.png or res-preview.png) and exit")
     parser.add_argument("--sequence", action="store_true",
                         help="with --format png: write every frame into a <name>-frames folder")
     parser.add_argument("--sequence-fps", help="with --sequence: frames per second to keep (default: all)")
@@ -113,6 +115,10 @@ def main(argv=None):
                 raise OmaConvertError("The input file does not exist or is not a regular file.", str(path))
             info = probe_media(path, runner)
             sink.emit("probe", **info.event_fields())
+            return 0
+        if args.forget_preview:
+            for path in args.forget_preview:
+                sink.emit("forgotten", **forget_preview(path))
             return 0
         if args.preview:
             if not args.preview_output:

@@ -123,6 +123,11 @@ Item {
             else service.error = "Choose a local file, not a remote URL."
         }
         else if (!checked && !service.busy) { checked = true; service.check() }
+        // Closing deleted the cached thumbnails; rebuild them for a file still open.
+        if (service.metadata && service.inputPath && !payload.file && !(payload.files && payload.files.length)) {
+            preview.requestSource(service.inputPath, root.trimShown ? trimBar.playhead : 0)
+            if (service.result && service.result.path) preview.requestResult(service.result.first_frame || service.result.path)
+        }
         service.loadCapabilities()
         service.loadOpenWith()
         service.loadHotkey()
@@ -222,6 +227,8 @@ Item {
         opened = false
         window.visible = false
         closingFromHost = false
+        // Thumbnails show file content: drop the cached copies with the window.
+        preview.clearAll()
     }
     function dismiss() {
         // User-initiated close: keep host openPanelIds in sync so toggle() works.

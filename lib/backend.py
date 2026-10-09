@@ -237,6 +237,7 @@ def _convert_sequence(runner, input_path, work, parent, seek, clip, sequence_fps
             metadata = _terminal_metadata(first, runner)
             total = sum(path.stat().st_size for path in frames_dir.iterdir())
             runner.check_cancelled()
+            _no_wider_than_source(frames_dir, input_path)
             published = publish_folder_no_clobber(
                 frames_dir, parent / f"{input_path.stem}-frames",
                 check_cancelled=runner.check_cancelled,
@@ -253,6 +254,26 @@ def _convert_sequence(runner, input_path, work, parent, seek, clip, sequence_fps
         if getattr(exc, "errno", None) == 28:
             raise OmaConvertError("Conversion failed because the destination disk is full.", str(exc)) from exc
         raise OmaConvertError("Could not create the output folder.", str(exc)) from exc
+
+
+def _no_wider_than_source(path, source):
+    """A result is never readable by more people than its source: drop the
+    group/other bits the source does not grant (a 0600 video gives a 0600
+    GIF). Folders keep their search bit only for those who may read."""
+    try:
+        source_mode = os.stat(source).st_mode
+    except OSError:
+        return
+    keep = 0o700
+    if source_mode & 0o040:
+        keep |= 0o070
+    if source_mode & 0o004:
+        keep |= 0o007
+    path = Path(path)
+    for item in [path] + (sorted(path.iterdir()) if path.is_dir() else []):
+        mode = item.stat().st_mode & 0o777
+        if mode & ~keep:
+            item.chmod(mode & keep)
 
 
 def convert(runner, input_path, fmt, output_path, requested_bytes, preset, preference,
@@ -381,6 +402,7 @@ def convert(runner, input_path, fmt, output_path, requested_bytes, preset, prefe
                     f"Measured result: {metadata['bytes']} bytes.",
                 )
             runner.check_cancelled()
+            _no_wider_than_source(temp_output, input_path)
             published = publish_no_clobber(
                 temp_output, requested_output, input_path,
                 check_cancelled=runner.check_cancelled,
