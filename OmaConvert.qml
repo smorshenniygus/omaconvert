@@ -647,6 +647,9 @@ Item {
         activeFocusOnTab: true
         Accessible.role: Accessible.Button
         Accessible.name: act.label
+        // Enter on a focused action runs it: without this the window's
+        // Enter shortcut (open the result) wins over Keys.onReturnPressed.
+        Keys.onShortcutOverride: event => event.accepted = event.key === Qt.Key_Return || event.key === Qt.Key_Enter
         Keys.onReturnPressed: act.triggered()
         Keys.onEnterPressed: act.triggered()
         Keys.onSpacePressed: act.triggered()
