@@ -23,6 +23,8 @@ class JsonArgumentParser(argparse.ArgumentParser):
 def build_parser():
     parser = JsonArgumentParser(prog="omaconvert", add_help=True)
     parser.add_argument("input", nargs="*", help="input media file; several files make a batch with one recipe")
+    parser.add_argument("--batch", action="store_true",
+                        help="report the inputs as a batch (item and batch-complete events) even when there is one")
     parser.add_argument("--format", type=str.lower, choices=formats.cli_choices(),
                         help="output format; jpeg and tif are accepted as jpg and tiff")
     parser.add_argument("--max-size", help="decimal size such as 50MB")
@@ -137,8 +139,10 @@ def main(argv=None):
                                        max_edge=edge, position=position)
             sink.emit("preview", **preview)
             return 0
-        if len(args.input) > 1 and args.output:
-            raise OmaConvertError("Several inputs need --output-dir, not --output.")
+        # The window sends --batch: what is left of a selection may be one file.
+        batch = args.batch or len(args.input) > 1
+        if batch and args.output:
+            raise OmaConvertError("A batch needs --output-dir, not --output.")
         if not args.input:
             raise OmaConvertError("An input file is required.")
         if not args.format:
@@ -169,7 +173,7 @@ def main(argv=None):
                 sequence_fps = float(args.sequence_fps)
             except (TypeError, ValueError):
                 raise OmaConvertError("--sequence-fps must be a number of frames per second.")
-        if len(args.input) > 1:
+        if batch:
             if trim_start is not None or trim_end is not None:
                 raise OmaConvertError("Trimming applies to one video at a time.")
             summary = convert_batch(runner, args.input, args.format, requested_bytes, args.preset,

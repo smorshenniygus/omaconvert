@@ -427,9 +427,10 @@ function parsePinned(text) {
     catch (_) { return [] }
 }
 // Arguments for a batch: every path first, then the one recipe (no trim).
+// --batch keeps batch events when only one file of the selection is left.
 function batchArguments(paths, format, mode, size, unit, preset, preference, outputDir, sequenceFps) {
     var args = cliArguments(paths[0], format, mode, size, unit, preset, preference, 0, 0, 0, outputDir, sequenceFps)
-    return [paths[0]].concat(paths.slice(1)).concat(args.slice(1))
+    return [paths[0]].concat(paths.slice(1)).concat(args.slice(1), ["--batch"])
 }
 
 // What the list shows for the typed text: matching recipes, plus the

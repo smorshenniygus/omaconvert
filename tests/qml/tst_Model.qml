@@ -239,6 +239,9 @@ TestCase {
         compare(Model.parsePinned("[\"gif 10mb\", 3]"), ["gif 10mb"])
         compare(Model.parsePinned("oops"), [])
         compare(Model.batchArguments(["/a.png", "/b c.png"], "jpg", "target", "200", "KB", "balanced", "balanced", "", null),
-                ["/a.png", "/b c.png", "--format", "jpg", "--preset", "balanced", "--preference", "balanced", "--max-size", "200KB"])
+                ["/a.png", "/b c.png", "--format", "jpg", "--preset", "balanced", "--preference", "balanced", "--max-size", "200KB", "--batch"])
+        // What is left of a selection may be one file: still a batch.
+        compare(Model.batchArguments(["/a.png"], "webp", "quick", "50", "MB", "small", "balanced", "/out", null),
+                ["/a.png", "--format", "webp", "--preset", "small", "--preference", "balanced", "--output-dir", "/out", "--batch"])
     }
 }

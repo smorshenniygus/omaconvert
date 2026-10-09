@@ -84,6 +84,20 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(items[0]["path"], str(self.images[0].resolve()))
         self.assertTrue(items[1]["message"])
 
+    def test_batch_of_one_reports_batch_events(self):
+        # A selection where only one file is readable is still a batch for the window.
+        code, events = self.run_cli(self.images[0], "--format", "jpg", "--max-size", "40KB", "--batch")
+        self.assertEqual(code, 0, events)
+        self.assertEqual([e["event"] for e in events if e["event"].startswith("item")], ["item", "item-complete"])
+        summary = events[-1]
+        self.assertEqual(summary["event"], "batch-complete")
+        self.assertEqual((summary["done"], summary["total"]), (1, 1))
+        self.assertEqual(len(summary["paths"]), 1)
+        self.assertFalse(any(e["event"] == "complete" for e in events))
+        code, events = self.run_cli(self.images[0], "--format", "jpg", "--batch", "--output", self.root / "x.jpg")
+        self.assertEqual(code, 2)
+        self.assertIn("--output-dir", events[-1]["message"])
+
     def test_single_input_still_reports_complete(self):
         code, events = self.run_cli(self.images[0], "--format", "jpg", "--max-size", "40KB")
         self.assertEqual(code, 0)
