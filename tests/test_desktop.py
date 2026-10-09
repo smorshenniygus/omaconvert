@@ -151,6 +151,27 @@ else:
         self.run_cli("--hotkey", "on")
         self.assertEqual(self.bindings.read_text().count("o.bind(\"SUPER + SHIFT + PERIOD\""), 1)
 
+    def test_symlinked_bindings_stay_a_symlink(self):
+        self.hypr([])
+        dotfiles = self.home / "dotfiles" / "bindings.lua"
+        dotfiles.parent.mkdir()
+        self.bindings.replace(dotfiles)
+        self.bindings.symlink_to(dotfiles)
+        self.run_cli("--hotkey", "on")
+        self.assertTrue(self.bindings.is_symlink())
+        self.assertIn("OmaConvert", dotfiles.read_text())
+        self.run_cli("--hotkey", "off")
+        self.assertTrue(self.bindings.is_symlink())
+        self.assertEqual(dotfiles.read_text(), self.original)
+
+    def test_off_without_a_block_leaves_the_file_and_hyprland_alone(self):
+        self.hypr([])
+        self.bindings.write_text(self.original + "\n\n")
+        _code, events = self.run_cli("--hotkey", "off")
+        self.assertEqual(events[-1]["enabled"], False)
+        self.assertEqual(self.bindings.read_text(), self.original + "\n\n")
+        self.assertNotIn(["reload"], self.calls("hyprctl"))
+
     def test_missing_bindings_file_is_a_clear_error(self):
         self.bindings.unlink()
         self.hypr([])
