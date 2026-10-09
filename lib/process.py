@@ -48,6 +48,10 @@ def stall_timeout():
     return value if value > 0 else None
 
 
+# -progress keys that change while an encode advances.
+_ADVANCING = frozenset({"frame", "out_time_us", "out_time_ms", "out_time", "total_size", "progress"})
+
+
 class ProcessRunner:
     def __init__(self, sink):
         self.sink = sink
@@ -194,14 +198,18 @@ class ProcessRunner:
         thread = threading.Thread(target=_drain_tail, args=(process.stderr, stderr_tail), daemon=True)
         thread.start()
         activity = [time.monotonic()]
-        seen = [None]
+        seen = {}
         self._watch(process, stall_timeout() if stall is None else stall, lambda: activity[0])
         last_progress = -1.0
         for line in process.stdout:
-            progress = parse_ffmpeg_progress(line.strip(), duration)
-            if progress is not None and progress != seen[0]:
-                seen[0] = progress
+            line = line.strip()
+            # Any advance counts, not only the share of `duration`: an
+            # animation without a known duration still reports frames.
+            key, _, value = line.partition("=")
+            if key in _ADVANCING and seen.get(key) != value:
+                seen[key] = value
                 activity[0] = time.monotonic()
+            progress = parse_ffmpeg_progress(line, duration)
             if progress is not None and (progress >= 1 or progress - last_progress >= 0.01):
                 last_progress = progress
                 self.sink.emit(stage, progress=progress, **event_fields)

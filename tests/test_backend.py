@@ -374,6 +374,18 @@ class ProcessRunnerTests(unittest.TestCase):
                   "    print(f'out_time_us={i * 100000}', flush=True); time.sleep(0.15)\n")
         runner.ffmpeg([sys.executable, "-c", script], 1, stall=0.5)
 
+    def test_ffmpeg_without_duration_is_watched_by_frames(self):
+        # An animation of unknown length gives no progress share, only frames.
+        runner = ProcessRunner(self.Sink())
+        script = ("import time\n"
+                  "for i in range(8):\n"
+                  "    print(f'frame={i}', 'out_time_us=N/A', sep='\\n', flush=True); time.sleep(0.15)\n")
+        runner.ffmpeg([sys.executable, "-c", script], 0, stall=0.5)
+        script = "import time; print('frame=3', flush=True); time.sleep(30)"
+        with self.assertRaises(OmaConvertError) as caught:
+            runner.ffmpeg([sys.executable, "-c", script], 0, stall=0.5)
+        self.assertIn("stopped responding", caught.exception.message)
+
     def test_stall_timeout_env_override(self):
         from lib import process
         with mock.patch.dict(os.environ, {"OMACONVERT_STALL_TIMEOUT": "0"}):
