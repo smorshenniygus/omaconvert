@@ -138,14 +138,19 @@ Item {
     Process {
         id: sourceJob
         property int generation: 0
+        // Generation of the process actually running. A new request only
+        // queues its command: Quickshell starts it after the old process
+        // exits, and the old one's output arrives after `generation` moved on.
+        property int startedGeneration: -1
+        onStarted: sourceJob.startedGeneration = sourceJob.generation
         stdout: StdioCollector {
             waitForEnd: true
-            onStreamFinished: root.handleFinished(text, sourceJob.generation, true)
+            onStreamFinished: root.handleFinished(text, sourceJob.startedGeneration, true)
         }
         // qmllint disable signal-handler-parameters
         onExited: (code) => {
             // Stream finish carries the result; this only clears a hung spinner.
-            if (sourceJob.generation === root.sourceGeneration && root.sourceLoading && code !== 0)
+            if (sourceJob.startedGeneration === root.sourceGeneration && root.sourceLoading && code !== 0)
                 root.sourceLoading = false
         }
         // qmllint enable signal-handler-parameters
@@ -153,13 +158,15 @@ Item {
     Process {
         id: resultJob
         property int generation: 0
+        property int startedGeneration: -1 // as for sourceJob
+        onStarted: resultJob.startedGeneration = resultJob.generation
         stdout: StdioCollector {
             waitForEnd: true
-            onStreamFinished: root.handleFinished(text, resultJob.generation, false)
+            onStreamFinished: root.handleFinished(text, resultJob.startedGeneration, false)
         }
         // qmllint disable signal-handler-parameters
         onExited: (code) => {
-            if (resultJob.generation === root.resultGeneration && root.resultLoading && code !== 0)
+            if (resultJob.startedGeneration === root.resultGeneration && root.resultLoading && code !== 0)
                 root.resultLoading = false
         }
         // qmllint enable signal-handler-parameters
