@@ -72,7 +72,6 @@ Item {
     property int selectedRow: 0
     readonly property var formatOptions: Model.commandFormats(root.inputKind, service.capabilities)
     readonly property string unavailableFormats: Model.unavailableText(root.inputKind, service.capabilities)
-    readonly property string audioProblem: Model.audioProblem(root.formatValue, service.metadata, service.capabilities)
     readonly property string unitText: ["MB", "KB"][root.unitIndex] || "MB"
     onFormatOptionsChanged: if (root.formatOptions.indexOf(root.formatValue) < 0) Qt.callLater(root.resetRecipes)
     Component.onCompleted: {
@@ -88,7 +87,9 @@ Item {
         : ({ rows: [], chips: [], note: "" })
     readonly property var fieldsRecipe: Model.recipe(root.currentFields(), root.inputKind, service.metadata, service.capabilities, root.convertSeconds)
     readonly property bool readyToConvert: !service.busy && !root.pickerBusy && service.metadata !== null && service.dependenciesReady && (!root.trimShown || trimBar.valid)
-    readonly property bool canConvert: root.readyToConvert && (!root.sizeShown || Model.validSize(sizeInput.text)) && root.audioProblem === "" && root.formatOptions.indexOf(root.formatValue) >= 0
+    // The same checks as a recipe row (sound, size, a known duration for a
+    // size target), so the panel never starts what the list would block.
+    readonly property bool canConvert: root.readyToConvert && root.fieldsRecipe.problem === "" && root.formatOptions.indexOf(root.formatValue) >= 0
     // Format that Enter would run: the fields with "+" open, else the highlighted recipe.
     readonly property string activeFormat: root.advanced ? root.formatValue
         : (root.selectedRow < root.matched.rows.length ? root.matched.rows[root.selectedRow].fields.format : "")

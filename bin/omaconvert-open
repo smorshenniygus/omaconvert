@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Open a file in OmaConvert: omaconvert-open [FILE | file:// URI].
+"""Open files in OmaConvert: omaconvert-open [FILE | file:// URI]...
 
-Used by the desktop entry (Exec=... %f) for "Open With" and by scripts.
-Without an argument it just shows the window.
+Used by the desktop entry (Exec=... %F) for "Open With" and by scripts.
+Several files open as a batch. Without an argument it just shows the window.
 """
 from pathlib import Path
 import sys

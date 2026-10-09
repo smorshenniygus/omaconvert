@@ -10,6 +10,8 @@ var PLUGIN_ID = "io.github.smorshenniygus.omaconvert"
 function localPath(value) {
     var text = String(value || "")
     if (text.indexOf("/") === 0) return text
+    // file://localhost/… is the same local file (some file managers write it).
+    if (text.indexOf("file://localhost/") === 0) text = "file://" + text.slice(16)
     if (text.indexOf("file:///") !== 0) return ""
     try { return decodeURIComponent(text.slice(7)) } catch (_) { return "" }
 }
@@ -401,7 +403,8 @@ function recipe(fields, kind, media, caps, seconds) {
     }
 }
 
-// Up to four recipes for the opened file, the last used one first.
+// Recipes for the opened file: pinned ones first (all of them), then the
+// last used one and the defaults, four or more in all, at most nine.
 function recipes(kind, media, caps, lastCommand, seconds, pinned) {
     var available = commandFormats(kind, caps)
     var pins = pinned || []

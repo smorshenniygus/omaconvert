@@ -87,6 +87,7 @@ TestCase {
         compare(Model.localPath("/tmp/a #1 100%.mp4"), "/tmp/a #1 100%.mp4")
         compare(Model.localPath("file:///tmp/a%20%231%20100%25.mp4"), "/tmp/a #1 100%.mp4")
         compare(Model.localPath("file://host/tmp/a.mp4"), "")
+        compare(Model.localPath("file://localhost/tmp/a%20b.mp4"), "/tmp/a b.mp4")
         compare(Model.localPath("https://example.com/a.mp4"), "")
         compare(Model.localPath("relative.mp4"), "")
     }

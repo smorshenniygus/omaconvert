@@ -110,7 +110,8 @@ Item {
     // Several paths open as a batch: every file is probed first; files of
     // another kind than the first readable one are skipped.
     function selectFiles(paths) {
-        var list = (paths || []).filter(p => !!p)
+        // A path given twice (drop plus paste) would share one row.
+        var list = (paths || []).filter((p, i, all) => !!p && all.indexOf(p) === i)
         if (list.length <= 1) { if (list.length) selectFile(list[0]); return }
         if (busy) { error = "Wait for the current task to finish, then open the files again."; return }
         pendingSelection = ""
