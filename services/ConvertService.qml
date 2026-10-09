@@ -88,6 +88,13 @@ Item {
     }
     function selectFile(path) {
         if (!path) return
+        // Open With or the recording notification can arrive mid-conversion:
+        // a running conversion is never thrown away for it. Reading a file
+        // (or the start-up check) is cheap and simply replaced.
+        if (currentJob !== null && (operation === "convert" || operation === "batch")) {
+            error = "Still converting: open " + Model.name(path) + " again when it is done, or cancel first."
+            return
+        }
         if (busy) {
             pendingSelection = path
             inputPath = path
