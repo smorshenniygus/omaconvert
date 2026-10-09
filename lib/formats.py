@@ -89,34 +89,34 @@ def menu_order(kind):
 
 
 # ffmpeg table rows: " V....D libx264   description", "  E  mp4   description",
-# " .. palettegen  V->V  description". Header rows are before the "---" line.
-_ROW = re.compile(r"^\s*([A-Z.|]+)\s+(\S+)")
+# " DEd alsa   description", " TSC palettegen  V->V  description". Rows are
+# recognised by their shape, not by a separator line: FFmpeg before 7.0 ends
+# the -muxers legend with "--", later ones with "---", and -filters has no
+# separator at all before 8.1. Legend rows ("  T.. = Timeline support") have
+# "=" where a row has its name; title rows ("Encoders:") match no flag column.
+_ROW = re.compile(r"^\s*([A-Z.|]+d?)\s+(\S+)")
+
+
+def _rows(text):
+    for line in (text or "").splitlines():
+        match = _ROW.match(line)
+        if match and match.group(2) != "=":
+            yield match.group(1), match.group(2)
 
 
 def _table(text):
     names = set()
-    body = False
-    for line in (text or "").splitlines():
-        if not body:
-            body = line.strip().startswith("---")
-            continue
-        match = _ROW.match(line)
-        if match:
-            names.update(match.group(2).split(","))
+    for _flags, name in _rows(text):
+        names.update(name.split(","))
     return names
 
 
 def _flagged_muxers(text):
     """Muxers only: the -muxers/-formats flag column contains E."""
     names = set()
-    body = False
-    for line in (text or "").splitlines():
-        if not body:
-            body = line.strip().startswith("---")
-            continue
-        match = _ROW.match(line)
-        if match and "E" in match.group(1):
-            names.update(match.group(2).split(","))
+    for flags, name in _rows(text):
+        if "E" in flags:
+            names.update(name.split(","))
     return names
 
 
