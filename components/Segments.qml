@@ -6,7 +6,10 @@ import QtQuick.Layouts
 // chosen cell tinted with the selection color, a focus-colored border while
 // the strip has keyboard focus. Left/Right (or h/l) pick the neighbour.
 // `options` are strings or { value, label } objects; `changed(value)` fires
-// on every user pick. Theme colors arrive as properties (unit-testable).
+// on every user pick. `value` is owned by the caller: a pick only emits
+// `changed` and the caller updates the property `value` is bound to, so the
+// binding (and the highlight) keeps following the model after any click.
+// Theme colors arrive as properties (unit-testable).
 Rectangle {
     id: root
     property var options: []
@@ -27,7 +30,7 @@ Rectangle {
     function pick(index) {
         if (index < 0 || index >= options.length) return
         var v = optionValue(options[index])
-        if (v !== value) { value = v; root.changed(v) }
+        if (v !== value) root.changed(v)
     }
 
     Layout.alignment: Qt.AlignLeft
