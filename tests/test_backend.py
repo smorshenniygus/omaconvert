@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 import os
 from pathlib import Path
 import shutil
@@ -475,6 +476,35 @@ class ConversionSafetyTests(unittest.TestCase):
 
             self.assertEqual(selected, profiles[1])
             self.assertEqual(output.stat().st_size, 50)
+
+    def test_size_correction_scales_only_the_video_part(self):
+        # Sound takes 45% of the budget and the encoder overshoots its video
+        # bitrate by half: scaling the whole file would miss a second time.
+        runner = self.Runner()
+        info = MediaInfo("source.mp4", 10.0, 320, 180, 15.0, "h264", 10_000_000, True)
+        requested = 270_000
+        audio = 96_000 * 10 / 8
+        rates = []
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.mp4"
+            source.write_bytes(b"source")
+
+            def fake_encode(_runner, _source, destination, _info, _fmt, internal, attempt=1,
+                            bitrate_override=None, **_kwargs):
+                rate = bitrate_override or int((internal * 8 / 10 - 96_000) * 0.96)
+                rates.append(rate)
+                Path(destination).write_bytes(b"x" * int(rate * 10 / 8 * 1.5 + audio))
+                return 320, 180, 15.0, rate
+
+            def fake_probe(path, _runner):
+                return info if Path(path) == source else replace(info, path=str(path))
+
+            with mock.patch("lib.backend.encode_video_target", side_effect=fake_encode), \
+                 mock.patch("lib.backend.probe_media", side_effect=fake_probe):
+                result = convert(runner, source, "mp4", None, requested, "balanced", "balanced")
+            self.assertEqual(len(rates), 2)
+            self.assertLessEqual(result["bytes"], requested)
 
     def test_failed_final_probe_does_not_publish_output(self):
         runner = self.Runner()

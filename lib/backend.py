@@ -7,7 +7,7 @@ import subprocess
 
 from .color import sdr_filter
 from .encoders import (
-    encode_gif, encode_image_quick, encode_image_target, encode_png_sequence,
+    TARGET_AUDIO_RATE, encode_gif, encode_image_quick, encode_image_target, encode_png_sequence,
     encode_video_quick, encode_video_target,
 )
 from .errors import Cancelled, OmaConvertError
@@ -376,7 +376,10 @@ def convert(runner, input_path, fmt, output_path, requested_bytes, preset, prefe
                     runner, input_path, temp_output, work, fmt, internal, seek=seek, clip=clip)
                 size = temp_output.stat().st_size
                 if size > requested_bytes:
-                    corrected = int(bitrate * internal / size * 0.94)
+                    # Only the video part shrinks: scale it alone, or a clip
+                    # whose sound is a big share of the budget misses again.
+                    audio = TARGET_AUDIO_RATE * work.duration / 8 if work.audio else 0
+                    corrected = int(bitrate * max(0, internal - audio) / max(1, size - audio) * 0.94)
                     temp_output.unlink()
                     width, height, fps, bitrate = encode_video_target(
                         runner, input_path, temp_output, work, fmt, internal, attempt=2,
