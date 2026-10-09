@@ -96,11 +96,13 @@ def main(argv=None):
             return 0
         deps = dependencies()
         sink.emit("dependencies", **deps, ok=deps["ffmpeg"] and deps["ffprobe"], version=__version__)
-        if args.check:
-            return 0 if deps["ffmpeg"] and deps["ffprobe"] else 1
         missing = [name for name in ("ffmpeg", "ffprobe") if not deps[name]]
         if missing:
-            raise OmaConvertError("Required media tools are missing.", ", ".join(missing))
+            # --check too: the window shows this error rather than a bare exit code.
+            raise OmaConvertError("Required media tools are missing: " + ", ".join(missing) + ". Install FFmpeg.",
+                                  "Not found on PATH: " + ", ".join(missing))
+        if args.check:
+            return 0
         if args.capabilities:
             try:
                 tools = formats.toolbox()

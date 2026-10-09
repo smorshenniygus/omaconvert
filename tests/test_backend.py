@@ -525,6 +525,16 @@ class CliTests(unittest.TestCase):
         self.assertTrue(lines[0]["ffprobe"])
         self.assertEqual(result.stderr, "")
 
+    def test_check_names_missing_tools(self):
+        with tempfile.TemporaryDirectory(prefix="omaconvert-nopath-") as directory:
+            os.symlink(sys.executable, Path(directory) / "python3")
+            result = subprocess.run([str(ROOT / "bin" / "omaconvert"), "--check"], cwd=ROOT, text=True,
+                                    capture_output=True, env=dict(os.environ, PATH=directory))
+        self.assertNotEqual(result.returncode, 0)
+        events = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual([e["event"] for e in events], ["dependencies", "error"])
+        self.assertIn("ffmpeg, ffprobe", events[-1]["message"])
+
     def test_usage_errors_are_json_without_traceback(self):
         result = self.run_cli()
         self.assertNotEqual(result.returncode, 0)
