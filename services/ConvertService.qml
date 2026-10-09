@@ -180,7 +180,10 @@ Item {
             if (line.trim()) details = (details + "\n" + line).slice(-16000)
             return
         }
-        if (event.event === "probe") { if (operation !== "batch") metadata = event }
+        // A conversion probes its input again; only a probe job describes a
+        // newly chosen file. Replacing metadata mid-conversion would reset
+        // the trim, the recipes and the preview of the file being converted.
+        if (event.event === "probe") { if (operation === "probe") metadata = event }
         else if (event.event === "probe-item") {
             var readable = event.ok && (batchKind === "" || event.kind === batchKind)
             updateBatch(event.index, event.ok
