@@ -136,6 +136,20 @@ TestCase {
         compare(Model.parseCommand("mp4 quick high", "video", video).fields.preset, "high")
         compare(Model.parseCommand("mp4 quick balanced", "video", video).fields.preset, "balanced")
         compare(Model.parseCommand("gif 50mb balanced", "video", video).fields.preference, "balanced")
+        // A quality word next to a size keeps the size; "quick" drops it, visibly.
+        p = Model.parseCommand("mp4 25mb high", "video", video)
+        compare(p.fields.mode, "target")
+        compare(p.fields.size, "25")
+        compare(p.chips.map(c => c.text + (c.ok ? "" : " ✗")), ["MP4", "≤ 25 MB", "high ✗"])
+        compare(Model.parseCommand("mp4 high", "video", video).fields.mode, "quick")
+        p = Model.parseCommand("mp4 25mb quick", "video", video)
+        compare(p.fields.mode, "quick")
+        compare(p.chips.map(c => c.text + (c.ok ? "" : " ✗")), ["MP4", "≤ 25 MB ✗", "quick"])
+        // A frame rate applies to a PNG sequence only.
+        p = Model.parseCommand("gif 10fps", "video", video)
+        compare(p.fields.sequenceFps, undefined)
+        compare(p.chips.map(c => c.text + (c.ok ? "" : " ✗")), ["GIF", "10 fps ✗"])
+        compare(Model.parseCommand("png frames 10mb", "video", video).chips.map(c => c.ok), [true, false])
         // Unknown words are reported, never guessed.
         p = Model.parseCommand("gif please", "video", video)
         compare(p.rest, ["please"])
