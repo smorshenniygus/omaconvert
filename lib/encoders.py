@@ -147,6 +147,16 @@ def _video_shape(info, video_rate=None, fps=None):
     return max(2, width // 2 * 2), max(2, height // 2 * 2)
 
 
+def _quick_shape(info, cap):
+    """Even (width, height) with the short side at most `cap`: 480p, 720p or
+    1080p for landscape and portrait clips alike. Never upscales."""
+    width, height = info.width, info.height
+    short = min(width, height)
+    if short > cap:
+        width, height = round(width * cap / short), round(height * cap / short)
+    return max(2, width // 2 * 2), max(2, height // 2 * 2)
+
+
 def _image_dimensions(info, scale):
     return max(1, round(info.width * scale)), max(1, round(info.height * scale))
 
@@ -245,8 +255,7 @@ def encode_video_quick(runner, input_path, output, info, fmt, preset, seek=0.0, 
         "high": (1080, 18, 30),
     }
     cap, crf, fps_cap = settings[preset]
-    width = min(info.width, cap) // 2 * 2
-    height = min(info.height, round(info.height * width / info.width) // 2 * 2)
+    width, height = _quick_shape(info, cap)
     fps = min(info.fps, fps_cap)
     vf = chain(f"fps={fps:.6g}", f"scale={width}:{height}:flags=lanczos", sdr_filter(info), "setsar=1")
     common = _input_args(input_path, seek, clip) + ["-vf", vf,

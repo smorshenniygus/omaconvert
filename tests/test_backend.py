@@ -295,6 +295,26 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(height % 2, 0)
 
 
+    def test_quick_presets_cap_the_short_side(self):
+        # 480p/720p/1080p mean the same for landscape and portrait clips.
+        cases = {
+            (1920, 1080): {"small": (852, 480), "balanced": (1280, 720), "high": (1920, 1080)},
+            (1080, 1920): {"small": (480, 852), "balanced": (720, 1280), "high": (1080, 1920)},
+            (640, 360): {"small": (640, 360), "balanced": (640, 360), "high": (640, 360)},
+            (3840, 2160): {"high": (1920, 1080)},
+        }
+        for (source_width, source_height), presets in cases.items():
+            info = MediaInfo("clip.mp4", 3.0, source_width, source_height, 30.0, "h264", 1000, False)
+            for preset, expected in presets.items():
+                with self.subTest(source=(source_width, source_height), preset=preset):
+                    runner = mock.Mock()
+                    width, height, _fps = encode_video_quick(
+                        runner, Path("clip.mp4"), Path("out.mp4"), info, "mp4", preset)
+                    self.assertEqual((width, height), expected)
+                    vf = runner.ffmpeg.call_args[0][0][runner.ffmpeg.call_args[0][0].index("-vf") + 1]
+                    self.assertIn(f"scale={width}:{height}:", vf)
+
+
 class ProcessRunnerTests(unittest.TestCase):
     class Sink:
         def emit(self, *_args, **_fields):
