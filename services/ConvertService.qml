@@ -279,6 +279,8 @@ Item {
         if (operation === "batch")
             batch = batch.map(item => item.status === "working" || item.status === "queued"
                 ? Object.assign({}, item, { status: "stopped" }) : item)
+        else if (operation === "probe-all") // cancelled or crashed while reading
+            batch = batch.map(item => item.status === "reading" ? Object.assign({}, item, { status: "stopped" }) : item)
         if (wasCancelling && !result) phase = "Cancelled — your source is unchanged."
         else if (!job.terminalEvent && (lastExit !== 0 || ((operation === "convert" || operation === "batch") && !result)))
             error = "The converter stopped unexpectedly. See Details and try again."

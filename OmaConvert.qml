@@ -915,7 +915,8 @@ Item {
                                     Text {
                                         textFormat: Text.PlainText
                                         Layout.fillWidth: true
-                                        text: service.metadata !== null ? Model.mediaDescription(service.metadata) : "Reading media…"
+                                        text: service.metadata !== null ? Model.mediaDescription(service.metadata)
+                                            : (service.busy ? "Reading media…" : "Not read  ·  choose another file")
                                         color: root.dim
                                         font.family: root.fontFamily
                                         font.pixelSize: root.px(0.917)
