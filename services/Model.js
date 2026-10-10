@@ -10,6 +10,8 @@ var PLUGIN_ID = "io.github.smorshenniygus.omaconvert"
 function localPath(value) {
     var text = String(value || "")
     if (text.indexOf("/") === 0) return text
+    // file://localhost/… is the same local file (some file managers write it).
+    if (text.indexOf("file://localhost/") === 0) text = "file://" + text.slice(16)
     if (text.indexOf("file:///") !== 0) return ""
     try { return decodeURIComponent(text.slice(7)) } catch (_) { return "" }
 }
@@ -256,7 +258,7 @@ function isMoving(format, kind) { return kind !== "image" && format !== SEQUENCE
 function parseCommand(text, kind, available) {
     var words = String(text || "").toLowerCase().replace(/(\d),(\d)/g, "$1.$2").split(/\s+/).filter(w => w !== "")
     var fields = {}, rest = [], chips = []
-    var named = "", sequence = false, frame = false, quick = false, balanced = false
+    var named = "", sequence = false, frame = false, quick = false, quality = false, balanced = false
     var size = "", unit = "", fps = 0
     for (var i = 0; i < words.length; i++) {
         var w = words[i]
@@ -271,7 +273,7 @@ function parseCommand(text, kind, available) {
         else if (SEQUENCE_WORDS.indexOf(w) >= 0) sequence = true
         else if (FRAME_WORDS.indexOf(w) >= 0) frame = true
         else if (QUICK_WORDS.indexOf(w) >= 0) quick = true
-        else if (PRESET_WORDS[w]) { fields.preset = PRESET_WORDS[w]; quick = true }
+        else if (PRESET_WORDS[w]) { fields.preset = PRESET_WORDS[w]; quality = true }
         else if (PREFERENCE_WORDS[w]) fields.preference = PREFERENCE_WORDS[w]
         else if (BALANCED_WORDS.indexOf(w) >= 0) balanced = true
         else if (FILLER_WORDS.indexOf(w) >= 0 || MB_WORDS.indexOf(w) >= 0) { }
@@ -285,18 +287,24 @@ function parseCommand(text, kind, available) {
     if (format && (available || []).indexOf(format) < 0) { unknown = format; format = "" }
     if (format) fields.format = format
     if (size) { fields.size = size; fields.unit = unit; fields.mode = "target" }
-    if (quick) fields.mode = "quick"
+    // A quality word alone means quick ("mp4 high"), but never drops a size
+    // typed next to it: "mp4 25mb high" keeps the limit. Only "quick" does.
+    if (quick || (quality && !size)) fields.mode = "quick"
     if (balanced) {
         if (fields.mode === "quick") fields.preset = "balanced"
         else fields.preference = "balanced"
     }
-    if (fps > 0) fields.sequenceFps = fps
+    // A rate only picks frames for a PNG sequence.
+    var rate = fps > 0 && (!format || format === SEQUENCE)
+    if (rate) fields.sequenceFps = fps
     if (format) chips.push({ text: format === SEQUENCE ? SEQUENCE : (kind !== "image" && stillFormat(format) ? "Frame → " + format : format), ok: true })
     if (unknown) chips.push({ text: unknown, ok: false })
-    if (fields.mode === "target") chips.push({ text: "≤ " + sizeText(fields.size, fields.unit), ok: true })
+    // Understood words that will not apply are shown struck out, not dropped.
+    if (size) chips.push({ text: "≤ " + sizeText(size, unit), ok: fields.mode === "target" && format !== SEQUENCE })
     if (fields.mode === "quick") chips.push({ text: "quick" + (fields.preset && fields.preset !== "balanced" ? " · " + fields.preset : ""), ok: true })
+    else if (quality) chips.push({ text: fields.preset, ok: false })
     if (fields.preference) chips.push({ text: "keep " + fields.preference, ok: true })
-    if (fps > 0) chips.push({ text: fps + " fps", ok: true })
+    if (fps > 0) chips.push({ text: fps + " fps", ok: rate })
     for (var r = 0; r < rest.length; r++) chips.push({ text: rest[r], ok: false })
     return { fields: fields, chips: chips, rest: rest, unknownFormat: unknown }
 }
@@ -395,7 +403,8 @@ function recipe(fields, kind, media, caps, seconds) {
     }
 }
 
-// Up to four recipes for the opened file, the last used one first.
+// Recipes for the opened file: pinned ones first (all of them), then the
+// last used one and the defaults, four or more in all, at most nine.
 function recipes(kind, media, caps, lastCommand, seconds, pinned) {
     var available = commandFormats(kind, caps)
     var pins = pinned || []
@@ -427,9 +436,10 @@ function parsePinned(text) {
     catch (_) { return [] }
 }
 // Arguments for a batch: every path first, then the one recipe (no trim).
+// --batch keeps batch events when only one file of the selection is left.
 function batchArguments(paths, format, mode, size, unit, preset, preference, outputDir, sequenceFps) {
     var args = cliArguments(paths[0], format, mode, size, unit, preset, preference, 0, 0, 0, outputDir, sequenceFps)
-    return [paths[0]].concat(paths.slice(1)).concat(args.slice(1))
+    return [paths[0]].concat(paths.slice(1)).concat(args.slice(1), ["--batch"])
 }
 
 // What the list shows for the typed text: matching recipes, plus the

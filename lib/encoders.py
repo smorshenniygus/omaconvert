@@ -147,6 +147,16 @@ def _video_shape(info, video_rate=None, fps=None):
     return max(2, width // 2 * 2), max(2, height // 2 * 2)
 
 
+def _quick_shape(info, cap):
+    """Even (width, height) with the short side at most `cap`: 480p, 720p or
+    1080p for landscape and portrait clips alike. Never upscales."""
+    width, height = info.width, info.height
+    short = min(width, height)
+    if short > cap:
+        width, height = round(width * cap / short), round(height * cap / short)
+    return max(2, width // 2 * 2), max(2, height // 2 * 2)
+
+
 def _image_dimensions(info, scale):
     return max(1, round(info.width * scale)), max(1, round(info.height * scale))
 
@@ -245,8 +255,7 @@ def encode_video_quick(runner, input_path, output, info, fmt, preset, seek=0.0, 
         "high": (1080, 18, 30),
     }
     cap, crf, fps_cap = settings[preset]
-    width = min(info.width, cap) // 2 * 2
-    height = min(info.height, round(info.height * width / info.width) // 2 * 2)
+    width, height = _quick_shape(info, cap)
     fps = min(info.fps, fps_cap)
     vf = chain(f"fps={fps:.6g}", f"scale={width}:{height}:flags=lanczos", sdr_filter(info), "setsar=1")
     common = _input_args(input_path, seek, clip) + ["-vf", vf,
@@ -266,9 +275,13 @@ def encode_video_quick(runner, input_path, output, info, fmt, preset, seek=0.0, 
     return width, height, fps
 
 
+# Sound of a target-size video, budgeted before the video bitrate.
+TARGET_AUDIO_RATE = 96_000
+
+
 def encode_video_target(runner, input_path, output, info, fmt, internal_target, attempt=1,
                         bitrate_override=None, seek=0.0, clip=None):
-    audio_rate = 96_000 if info.audio else 0
+    audio_rate = TARGET_AUDIO_RATE if info.audio else 0
     total_rate = internal_target * 8 / info.duration
     video_rate = int(bitrate_override or ((total_rate - audio_rate) * 0.96))
     if video_rate < 60_000:
@@ -285,12 +298,12 @@ def encode_video_target(runner, input_path, output, info, fmt, internal_target, 
     # browsers and chat apps. Same in both passes so the pass log matches.
     if fmt in ("mp4", "mov", "mkv"):
         video_codec = ["-c:v", "libx264", "-preset", "medium", "-pix_fmt", "yuv420p"]
-        audio_codec = ["-c:a", "aac", "-b:a", "96k"]
+        audio_codec = ["-c:a", "aac", "-b:a", str(TARGET_AUDIO_RATE)]
         if fmt in ("mp4", "mov"):
             audio_codec += ["-movflags", "+faststart"]
     else:
         video_codec = ["-c:v", "libvpx-vp9", "-deadline", "good", "-cpu-used", "2", "-pix_fmt", "yuv420p"]
-        audio_codec = ["-c:a", "libopus", "-b:a", "96k"]
+        audio_codec = ["-c:a", "libopus", "-b:a", str(TARGET_AUDIO_RATE)]
     first = _base_ffmpeg() + _input_args(input_path, seek, clip) + ["-map", f"0:{info.stream_index}", "-vf", vf,
         *video_codec, "-b:v", str(video_rate), "-pass", "1", "-passlogfile", passlog,
         "-an", "-f", "null", "-progress", "pipe:1", os.devnull]

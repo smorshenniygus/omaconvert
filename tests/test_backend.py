@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 import os
 from pathlib import Path
 import shutil
@@ -295,6 +296,26 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(height % 2, 0)
 
 
+    def test_quick_presets_cap_the_short_side(self):
+        # 480p/720p/1080p mean the same for landscape and portrait clips.
+        cases = {
+            (1920, 1080): {"small": (852, 480), "balanced": (1280, 720), "high": (1920, 1080)},
+            (1080, 1920): {"small": (480, 852), "balanced": (720, 1280), "high": (1080, 1920)},
+            (640, 360): {"small": (640, 360), "balanced": (640, 360), "high": (640, 360)},
+            (3840, 2160): {"high": (1920, 1080)},
+        }
+        for (source_width, source_height), presets in cases.items():
+            info = MediaInfo("clip.mp4", 3.0, source_width, source_height, 30.0, "h264", 1000, False)
+            for preset, expected in presets.items():
+                with self.subTest(source=(source_width, source_height), preset=preset):
+                    runner = mock.Mock()
+                    width, height, _fps = encode_video_quick(
+                        runner, Path("clip.mp4"), Path("out.mp4"), info, "mp4", preset)
+                    self.assertEqual((width, height), expected)
+                    vf = runner.ffmpeg.call_args[0][0][runner.ffmpeg.call_args[0][0].index("-vf") + 1]
+                    self.assertIn(f"scale={width}:{height}:", vf)
+
+
 class ProcessRunnerTests(unittest.TestCase):
     class Sink:
         def emit(self, *_args, **_fields):
@@ -353,6 +374,18 @@ class ProcessRunnerTests(unittest.TestCase):
                   "for i in range(8):\n"
                   "    print(f'out_time_us={i * 100000}', flush=True); time.sleep(0.15)\n")
         runner.ffmpeg([sys.executable, "-c", script], 1, stall=0.5)
+
+    def test_ffmpeg_without_duration_is_watched_by_frames(self):
+        # An animation of unknown length gives no progress share, only frames.
+        runner = ProcessRunner(self.Sink())
+        script = ("import time\n"
+                  "for i in range(8):\n"
+                  "    print(f'frame={i}', 'out_time_us=N/A', sep='\\n', flush=True); time.sleep(0.15)\n")
+        runner.ffmpeg([sys.executable, "-c", script], 0, stall=0.5)
+        script = "import time; print('frame=3', flush=True); time.sleep(30)"
+        with self.assertRaises(OmaConvertError) as caught:
+            runner.ffmpeg([sys.executable, "-c", script], 0, stall=0.5)
+        self.assertIn("stopped responding", caught.exception.message)
 
     def test_stall_timeout_env_override(self):
         from lib import process
@@ -444,6 +477,35 @@ class ConversionSafetyTests(unittest.TestCase):
             self.assertEqual(selected, profiles[1])
             self.assertEqual(output.stat().st_size, 50)
 
+    def test_size_correction_scales_only_the_video_part(self):
+        # Sound takes 45% of the budget and the encoder overshoots its video
+        # bitrate by half: scaling the whole file would miss a second time.
+        runner = self.Runner()
+        info = MediaInfo("source.mp4", 10.0, 320, 180, 15.0, "h264", 10_000_000, True)
+        requested = 270_000
+        audio = 96_000 * 10 / 8
+        rates = []
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.mp4"
+            source.write_bytes(b"source")
+
+            def fake_encode(_runner, _source, destination, _info, _fmt, internal, attempt=1,
+                            bitrate_override=None, **_kwargs):
+                rate = bitrate_override or int((internal * 8 / 10 - 96_000) * 0.96)
+                rates.append(rate)
+                Path(destination).write_bytes(b"x" * int(rate * 10 / 8 * 1.5 + audio))
+                return 320, 180, 15.0, rate
+
+            def fake_probe(path, _runner):
+                return info if Path(path) == source else replace(info, path=str(path))
+
+            with mock.patch("lib.backend.encode_video_target", side_effect=fake_encode), \
+                 mock.patch("lib.backend.probe_media", side_effect=fake_probe):
+                result = convert(runner, source, "mp4", None, requested, "balanced", "balanced")
+            self.assertEqual(len(rates), 2)
+            self.assertLessEqual(result["bytes"], requested)
+
     def test_failed_final_probe_does_not_publish_output(self):
         runner = self.Runner()
         info = MediaInfo("source.mp4", 3.0, 320, 180, 15.0, "h264", 1000, True)
@@ -504,6 +566,16 @@ class CliTests(unittest.TestCase):
         self.assertTrue(lines[0]["ffmpeg"])
         self.assertTrue(lines[0]["ffprobe"])
         self.assertEqual(result.stderr, "")
+
+    def test_check_names_missing_tools(self):
+        with tempfile.TemporaryDirectory(prefix="omaconvert-nopath-") as directory:
+            os.symlink(sys.executable, Path(directory) / "python3")
+            result = subprocess.run([str(ROOT / "bin" / "omaconvert"), "--check"], cwd=ROOT, text=True,
+                                    capture_output=True, env=dict(os.environ, PATH=directory))
+        self.assertNotEqual(result.returncode, 0)
+        events = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual([e["event"] for e in events], ["dependencies", "error"])
+        self.assertIn("ffmpeg, ffprobe", events[-1]["message"])
 
     def test_usage_errors_are_json_without_traceback(self):
         result = self.run_cli()

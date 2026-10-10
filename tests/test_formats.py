@@ -34,10 +34,14 @@ ENCODERS = """Encoders:
  V....D libvpx-vp9           libvpx VP9 (codec vp9)
  A....D aac                  AAC (Advanced Audio Coding)
 """
+# FFmpeg 7.0+ shape: a device column and a "---" separator.
 MUXERS = """Formats:
  D.. = Demuxing supported
  .E. = Muxing supported
+ ..d = Is a device
  ---
+  Ed alsa            ALSA audio output
+ D   aa              Audible AA format files
   E  gif             CompuServe Graphics Interchange Format (GIF)
   E  image2          image2 sequence
   E  matroska        Matroska
@@ -46,12 +50,41 @@ MUXERS = """Formats:
   E  webm            WebM
   E  webp            WebP
 """
+# FFmpeg 6.x shape: two flag columns and a "--" separator.
+MUXERS_6 = """File formats:
+ D. = Demuxing supported
+ .E = Muxing supported
+ --
+  E gif             CompuServe Graphics Interchange Format (GIF)
+  E image2          image2 sequence
+  E mp4             MP4 (MPEG-4 Part 14)
+ D  mpegts          MPEG-TS (MPEG-2 Transport Stream)
+"""
+# FFmpeg 7.0 to 8.0 shape: no separator between the legend and the rows.
 FILTERS = """Filters:
   T.. = Timeline support
+  .S. = Slice threading
+  ..C = Command support
+  A = Audio input/output
+  V = Video input/output
+  N = Dynamic number and/or type of input/output
+  | = Source or sink filter
+ ... palettegen        V->V       Find the optimal palette for a given stream.
+ ... paletteuse        VV->V      Use a palette to downsample an input video stream.
+ ..C scale             V->V       Scale the input video size and/or convert the image format.
+"""
+# FFmpeg 8.1+ shape: a "------" separator.
+FILTERS_81 = """Filters:
+  T.. = Timeline support
+  .S. = Slice threading
+  A = Audio input/output
+  V = Video input/output
+  N = Dynamic number and/or type of input/output
+  | = Source or sink filter
   ------
- .. palettegen        V->V       Find the optimal palette for a given stream.
- .. paletteuse        VV->V      Use a palette to downsample an input video stream.
- .. scale             V->V       Scale the input video size and/or convert the image format.
+ ... palettegen        V->V       Find the optimal palette for a given stream.
+ .S. tonemap           V->V       Conversion to/from different dynamic ranges.
+ .SC zscale            V->V       Apply resizing, colorspace and bit depth conversion.
 """
 
 
@@ -66,8 +99,26 @@ class ParseTests(unittest.TestCase):
         self.assertIn("libx264", tools.encoders)
         self.assertNotIn("V.....", tools.encoders)
         self.assertNotIn("=", tools.encoders)
-        self.assertEqual(tools.muxers, {"gif", "image2", "matroska", "mov", "mp4", "webm", "webp"})
-        self.assertIn("palettegen", tools.filters)
+        self.assertEqual(tools.muxers, {"alsa", "gif", "image2", "matroska", "mov", "mp4", "webm", "webp"})
+        self.assertEqual(tools.filters, {"palettegen", "paletteuse", "scale"})
+
+    def test_tables_of_every_ffmpeg_generation(self):
+        # Separators differ between versions; rows must be found in each.
+        self.assertEqual(formats._flagged_muxers(MUXERS_6), {"gif", "image2", "mp4"})
+        self.assertEqual(formats._table(FILTERS_81), {"palettegen", "tonemap", "zscale"})
+        for text in (ENCODERS, MUXERS, MUXERS_6, FILTERS, FILTERS_81):
+            names = formats._table(text)
+            self.assertFalse(names & {"=", "------", "---", "--"}, text)
+            self.assertFalse(any(name.endswith(":") for name in names), text)
+
+    @unittest.skipUnless(HAVE_TOOLS, "ffmpeg and ffprobe are required")
+    def test_installed_ffmpeg_tables(self):
+        formats.clear_cache()
+        self.addCleanup(formats.clear_cache)
+        tools = formats.toolbox()
+        self.assertIn("mp4", tools.muxers)
+        self.assertIn("png", tools.encoders)
+        self.assertTrue({"palettegen", "paletteuse", "scale"} <= tools.filters)
 
     def test_reduced_build_marks_formats(self):
         caps = {f["id"]: f for f in formats.capabilities(self.tools())["formats"]}

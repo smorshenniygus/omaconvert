@@ -138,8 +138,8 @@ def set_hotkey(enabled):
         raise RuntimeError(f"{path} does not exist; this Omarchy has no Lua bindings file.")
     text = path.read_text(encoding="utf-8")
     current = _current_keys(text)
-    if enabled and current:
-        return hotkey_status()
+    if bool(enabled) == (current is not None):
+        return hotkey_status()  # already so: no rewrite, no Hyprland reload
     if enabled:
         status = hotkey_status()
         if not status["free"]:
@@ -151,10 +151,13 @@ def set_hotkey(enabled):
         text = text.rstrip("\n") + "\n" + block
     else:
         text = _block_pattern().sub("\n", text).rstrip("\n") + "\n"
-    temp = path.with_name(f".{path.name}.omaconvert-tmp")
+    # Replace the file a symlinked bindings.lua (stow, dotfile repos) points
+    # to, so the link survives instead of becoming a plain file.
+    target = path.resolve()
+    temp = target.with_name(f".{target.name}.omaconvert-tmp")
     temp.write_text(text, encoding="utf-8")
-    temp.chmod(path.stat().st_mode & 0o777)
-    temp.replace(path)
+    temp.chmod(target.stat().st_mode & 0o777)
+    temp.replace(target)
     if shutil.which("hyprctl"):
         _run(["hyprctl", "reload"])
     return hotkey_status()

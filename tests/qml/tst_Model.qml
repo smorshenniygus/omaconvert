@@ -87,6 +87,7 @@ TestCase {
         compare(Model.localPath("/tmp/a #1 100%.mp4"), "/tmp/a #1 100%.mp4")
         compare(Model.localPath("file:///tmp/a%20%231%20100%25.mp4"), "/tmp/a #1 100%.mp4")
         compare(Model.localPath("file://host/tmp/a.mp4"), "")
+        compare(Model.localPath("file://localhost/tmp/a%20b.mp4"), "/tmp/a b.mp4")
         compare(Model.localPath("https://example.com/a.mp4"), "")
         compare(Model.localPath("relative.mp4"), "")
     }
@@ -136,6 +137,20 @@ TestCase {
         compare(Model.parseCommand("mp4 quick high", "video", video).fields.preset, "high")
         compare(Model.parseCommand("mp4 quick balanced", "video", video).fields.preset, "balanced")
         compare(Model.parseCommand("gif 50mb balanced", "video", video).fields.preference, "balanced")
+        // A quality word next to a size keeps the size; "quick" drops it, visibly.
+        p = Model.parseCommand("mp4 25mb high", "video", video)
+        compare(p.fields.mode, "target")
+        compare(p.fields.size, "25")
+        compare(p.chips.map(c => c.text + (c.ok ? "" : " ✗")), ["MP4", "≤ 25 MB", "high ✗"])
+        compare(Model.parseCommand("mp4 high", "video", video).fields.mode, "quick")
+        p = Model.parseCommand("mp4 25mb quick", "video", video)
+        compare(p.fields.mode, "quick")
+        compare(p.chips.map(c => c.text + (c.ok ? "" : " ✗")), ["MP4", "≤ 25 MB ✗", "quick"])
+        // A frame rate applies to a PNG sequence only.
+        p = Model.parseCommand("gif 10fps", "video", video)
+        compare(p.fields.sequenceFps, undefined)
+        compare(p.chips.map(c => c.text + (c.ok ? "" : " ✗")), ["GIF", "10 fps ✗"])
+        compare(Model.parseCommand("png frames 10mb", "video", video).chips.map(c => c.ok), [true, false])
         // Unknown words are reported, never guessed.
         p = Model.parseCommand("gif please", "video", video)
         compare(p.rest, ["please"])
@@ -239,6 +254,9 @@ TestCase {
         compare(Model.parsePinned("[\"gif 10mb\", 3]"), ["gif 10mb"])
         compare(Model.parsePinned("oops"), [])
         compare(Model.batchArguments(["/a.png", "/b c.png"], "jpg", "target", "200", "KB", "balanced", "balanced", "", null),
-                ["/a.png", "/b c.png", "--format", "jpg", "--preset", "balanced", "--preference", "balanced", "--max-size", "200KB"])
+                ["/a.png", "/b c.png", "--format", "jpg", "--preset", "balanced", "--preference", "balanced", "--max-size", "200KB", "--batch"])
+        // What is left of a selection may be one file: still a batch.
+        compare(Model.batchArguments(["/a.png"], "webp", "quick", "50", "MB", "small", "balanced", "/out", null),
+                ["/a.png", "--format", "webp", "--preset", "small", "--preference", "balanced", "--output-dir", "/out", "--batch"])
     }
 }

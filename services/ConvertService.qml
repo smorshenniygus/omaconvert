@@ -88,6 +88,13 @@ Item {
     }
     function selectFile(path) {
         if (!path) return
+        // Open With or the recording notification can arrive mid-conversion:
+        // a running conversion is never thrown away for it. Reading a file
+        // (or the start-up check) is cheap and simply replaced.
+        if (currentJob !== null && (operation === "convert" || operation === "batch")) {
+            error = "Still converting: open " + Model.name(path) + " again when it is done, or cancel first."
+            return
+        }
         if (busy) {
             pendingSelection = path
             inputPath = path
@@ -103,7 +110,8 @@ Item {
     // Several paths open as a batch: every file is probed first; files of
     // another kind than the first readable one are skipped.
     function selectFiles(paths) {
-        var list = (paths || []).filter(p => !!p)
+        // A path given twice (drop plus paste) would share one row.
+        var list = (paths || []).filter((p, i, all) => !!p && all.indexOf(p) === i)
         if (list.length <= 1) { if (list.length) selectFile(list[0]); return }
         if (busy) { error = "Wait for the current task to finish, then open the files again."; return }
         pendingSelection = ""
@@ -180,7 +188,10 @@ Item {
             if (line.trim()) details = (details + "\n" + line).slice(-16000)
             return
         }
-        if (event.event === "probe") { if (operation !== "batch") metadata = event }
+        // A conversion probes its input again; only a probe job describes a
+        // newly chosen file. Replacing metadata mid-conversion would reset
+        // the trim, the recipes and the preview of the file being converted.
+        if (event.event === "probe") { if (operation === "probe") metadata = event }
         else if (event.event === "probe-item") {
             var readable = event.ok && (batchKind === "" || event.kind === batchKind)
             updateBatch(event.index, event.ok
@@ -269,6 +280,8 @@ Item {
         if (operation === "batch")
             batch = batch.map(item => item.status === "working" || item.status === "queued"
                 ? Object.assign({}, item, { status: "stopped" }) : item)
+        else if (operation === "probe-all") // cancelled or crashed while reading
+            batch = batch.map(item => item.status === "reading" ? Object.assign({}, item, { status: "stopped" }) : item)
         if (wasCancelling && !result) phase = "Cancelled — your source is unchanged."
         else if (!job.terminalEvent && (lastExit !== 0 || ((operation === "convert" || operation === "batch") && !result)))
             error = "The converter stopped unexpectedly. See Details and try again."

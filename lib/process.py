@@ -1,3 +1,5 @@
+import ctypes
+import functools
 import os
 import signal
 import subprocess
@@ -15,6 +17,28 @@ PROBE_TIMEOUT = 120.0
 DEFAULT_STALL_TIMEOUT = 300.0
 
 
+_PR_SET_PDEATHSIG = 1
+try:
+    _prctl = ctypes.CDLL(None, use_errno=True).prctl
+    _prctl.argtypes = (ctypes.c_int,) + (ctypes.c_ulong,) * 4
+except (OSError, AttributeError):
+    _prctl = None
+
+
+def _die_with_parent(parent):
+    """Runs in the child before exec: SIGKILL it when the backend dies.
+
+    The window kills the backend outright when the shell reloads. Tools run
+    in their own session (for killpg) and FFmpeg ignores SIGPIPE, so they
+    would otherwise keep encoding for minutes into a folder nobody cleans.
+    Popen runs on the main thread, whose exit is what triggers the signal."""
+    if _prctl is None:
+        return
+    _prctl(_PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
+    if os.getppid() != parent:  # the backend died before prctl took effect
+        os.kill(os.getpid(), signal.SIGKILL)
+
+
 def stall_timeout():
     raw = os.environ.get("OMACONVERT_STALL_TIMEOUT", "")
     try:
@@ -22,6 +46,10 @@ def stall_timeout():
     except ValueError:
         return DEFAULT_STALL_TIMEOUT
     return value if value > 0 else None
+
+
+# -progress keys that change while an encode advances.
+_ADVANCING = frozenset({"frame", "out_time_us", "out_time_ms", "out_time", "total_size", "progress"})
 
 
 class ProcessRunner:
@@ -93,6 +121,7 @@ class ProcessRunner:
                 text=True,
                 errors="replace",
                 start_new_session=True,
+                preexec_fn=functools.partial(_die_with_parent, os.getpid()),
             )
         except OSError as exc:
             raise ProcessFailed("Could not start a required media tool.", str(exc)) from exc
@@ -169,14 +198,18 @@ class ProcessRunner:
         thread = threading.Thread(target=_drain_tail, args=(process.stderr, stderr_tail), daemon=True)
         thread.start()
         activity = [time.monotonic()]
-        seen = [None]
+        seen = {}
         self._watch(process, stall_timeout() if stall is None else stall, lambda: activity[0])
         last_progress = -1.0
         for line in process.stdout:
-            progress = parse_ffmpeg_progress(line.strip(), duration)
-            if progress is not None and progress != seen[0]:
-                seen[0] = progress
+            line = line.strip()
+            # Any advance counts, not only the share of `duration`: an
+            # animation without a known duration still reports frames.
+            key, _, value = line.partition("=")
+            if key in _ADVANCING and seen.get(key) != value:
+                seen[key] = value
                 activity[0] = time.monotonic()
+            progress = parse_ffmpeg_progress(line, duration)
             if progress is not None and (progress >= 1 or progress - last_progress >= 0.01):
                 last_progress = progress
                 self.sink.emit(stage, progress=progress, **event_fields)
