@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from lib.errors import OmaConvertError
-from lib.preview import clamp_edge, generate_preview, preview_position
-from lib.probe import MediaInfo
+from lib.preview import clamp_edge, generate_preview, png_size, preview_position
+from lib.probe import MediaInfo, probe_media
 from lib.process import ProcessRunner
 
 
@@ -53,6 +53,19 @@ class PreviewTests(unittest.TestCase):
         self.assertGreater(got["seek"], 0)
         self.assertLess(got["seek"], 2.0)
         self.assertEqual(got["kind"], "video")
+
+    def test_preview_size_comes_from_the_png_header(self):
+        output = self.root / "header-preview.png"
+        got = generate_preview(self.runner, self.video, output, max_edge=320)
+        probed = probe_media(output, self.runner)
+        self.assertEqual((got["width"], got["height"]), (probed.width, probed.height))
+        not_png = self.root / "not.png"
+        not_png.write_bytes(b"GIF89a" + bytes(40))
+        with self.assertRaises(OmaConvertError):
+            png_size(not_png)
+        not_png.write_bytes(b"")
+        with self.assertRaises(OmaConvertError):
+            png_size(not_png)
 
     def test_image_preview_preserves_aspect_and_alpha(self):
         output = self.root / "image-preview.png"

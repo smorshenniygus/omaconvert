@@ -1,6 +1,7 @@
 import ctypes
 import functools
 import os
+import shutil
 import signal
 import subprocess
 import threading
@@ -37,6 +38,14 @@ def _die_with_parent(parent):
     _prctl(_PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
     if os.getppid() != parent:  # the backend died before prctl took effect
         os.kill(os.getpid(), signal.SIGKILL)
+
+
+def dependencies():
+    return {
+        "ffmpeg": shutil.which("ffmpeg") is not None,
+        "ffprobe": shutil.which("ffprobe") is not None,
+        "gifsicle": shutil.which("gifsicle") is not None,
+    }
 
 
 def stall_timeout():

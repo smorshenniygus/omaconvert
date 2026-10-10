@@ -19,14 +19,6 @@ from .publish import publish_folder_no_clobber, publish_no_clobber, work_directo
 
 
 
-def dependencies():
-    return {
-        "ffmpeg": shutil.which("ffmpeg") is not None,
-        "ffprobe": shutil.which("ffprobe") is not None,
-        "gifsicle": shutil.which("gifsicle") is not None,
-    }
-
-
 def _default_output(input_path, fmt, requested_bytes):
     if requested_bytes:
         label = size_text(requested_bytes).replace(" ", "").replace(".", "-").lower()

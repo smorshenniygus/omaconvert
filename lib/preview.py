@@ -59,6 +59,22 @@ def _scale_filter(max_edge):
     )
 
 
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def png_size(path):
+    """(width, height) from the IHDR chunk, which a PNG must start with.
+    Reading 24 bytes replaces an ffprobe run on every preview."""
+    with open(path, "rb") as handle:
+        head = handle.read(24)
+    if len(head) < 24 or head[:8] != _PNG_SIGNATURE or head[12:16] != b"IHDR":
+        raise OmaConvertError("Could not generate a preview image.", "The output is not a PNG.")
+    width, height = int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+    if width <= 0 or height <= 0:
+        raise OmaConvertError("Could not generate a preview image.", "The PNG has no pixels.")
+    return width, height
+
+
 def cache_dir():
     base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
     return Path(base) / "omaconvert" / "previews"
@@ -141,15 +157,13 @@ def generate_preview(runner, input_path, output_path, max_edge=DEFAULT_EDGE,
         temp.unlink(missing_ok=True)
     try:
         size = output.stat().st_size
-        if size <= 0:
-            raise OmaConvertError("Could not generate a preview image.", "Empty output.")
-        preview_info = probe_media(output, runner)
+        width, height = png_size(output)
     except OSError as exc:
         raise OmaConvertError("Could not generate a preview image.", str(exc)) from exc
     return {
         "path": str(output.resolve()),
-        "width": preview_info.width,
-        "height": preview_info.height,
+        "width": width,
+        "height": height,
         "bytes": size,
         "kind": info.kind,
         "source": str(source.resolve()),

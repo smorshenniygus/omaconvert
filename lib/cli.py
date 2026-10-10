@@ -5,14 +5,16 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .backend import convert, convert_batch, dependencies, probe_all
 from .errors import Cancelled, OmaConvertError
 from .events import EventSink
-from . import desktop, formats, launcher
-from .optimizer import parse_size
+from . import formats
 from .preview import DEFAULT_EDGE, forget_preview, generate_preview
 from .probe import probe_media
-from .process import ProcessRunner
+from .process import ProcessRunner, dependencies
+
+# The window starts this CLI for every preview, probe and status: the
+# conversion and desktop modules are imported only by the commands that
+# use them (about a third of the start-up time of a preview).
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -74,9 +76,11 @@ def main(argv=None):
             sink.emit("version", version=__version__)
             return 0
         if args.paste:
+            from . import desktop
             sink.emit("paste", **desktop.paste())
             return 0
         if args.hotkey:
+            from . import desktop
             try:
                 state = desktop.hotkey_status() if args.hotkey == "status" else desktop.set_hotkey(args.hotkey == "on")
             except (OSError, RuntimeError) as exc:
@@ -84,9 +88,11 @@ def main(argv=None):
             sink.emit("hotkey", **state)
             return 0
         if args.offer_recording:
+            from . import desktop
             sink.emit("recording-offer", **desktop.offer_recording(args.offer_recording))
             return 0
         if args.open_with:
+            from . import launcher
             try:
                 state = (launcher.open_with_status() if args.open_with == "status"
                          else launcher.set_open_with(args.open_with == "on"))
@@ -111,6 +117,7 @@ def main(argv=None):
             sink.emit("capabilities", **formats.capabilities(tools))
             return 0
         if args.probe_all:
+            from .backend import probe_all
             probe_all(runner, args.input)
             return 0
         if args.probe:
@@ -151,6 +158,8 @@ def main(argv=None):
             raise OmaConvertError(
                 "An output format is required: " + ", ".join(f.id for f in formats.FORMATS) + "."
             )
+        from .backend import convert, convert_batch
+        from .optimizer import parse_size
         try:
             requested_bytes = parse_size(args.max_size) if args.max_size else None
         except ValueError as exc:
