@@ -248,6 +248,12 @@ def encode_image_target(runner, input_path, output, info, fmt, requested_bytes, 
     )
 
 
+# libvpx encodes one tile row at a time unless told otherwise: row
+# multithreading made a 20 s 540p two-pass WebM 28% faster on 4 cores with
+# the same output size and SSIM.
+_VP9_THREADS = ("-row-mt", "1")
+
+
 def encode_video_quick(runner, input_path, output, info, fmt, preset, seek=0.0, clip=None):
     settings = {
         "small": (480, 28, 36),
@@ -266,8 +272,8 @@ def encode_video_quick(runner, input_path, output, info, fmt, preset, seek=0.0, 
         if fmt in ("mp4", "mov"):
             codec += ["-movflags", "+faststart"]
     else:
-        codec = ["-c:v", "libvpx-vp9", "-crf", str(crf + 4), "-b:v", "0", "-pix_fmt", "yuv420p",
-                 "-c:a", "libopus", "-b:a", "96k"]
+        codec = ["-c:v", "libvpx-vp9", *_VP9_THREADS, "-crf", str(crf + 4), "-b:v", "0",
+                 "-pix_fmt", "yuv420p", "-c:a", "libopus", "-b:a", "96k"]
     progress_fields = {"pass": 1, "passes": 1, "width": width, "height": height, "fps": fps}
     runner.sink.emit("encoding", progress=0.0, **progress_fields)
     runner.ffmpeg(_base_ffmpeg() + common + codec + [str(output)], info.duration,
@@ -302,7 +308,8 @@ def encode_video_target(runner, input_path, output, info, fmt, internal_target, 
         if fmt in ("mp4", "mov"):
             audio_codec += ["-movflags", "+faststart"]
     else:
-        video_codec = ["-c:v", "libvpx-vp9", "-deadline", "good", "-cpu-used", "2", "-pix_fmt", "yuv420p"]
+        video_codec = ["-c:v", "libvpx-vp9", *_VP9_THREADS, "-deadline", "good", "-cpu-used", "2",
+                       "-pix_fmt", "yuv420p"]
         audio_codec = ["-c:a", "libopus", "-b:a", str(TARGET_AUDIO_RATE)]
     first = _base_ffmpeg() + _input_args(input_path, seek, clip) + ["-map", f"0:{info.stream_index}", "-vf", vf,
         *video_codec, "-b:v", str(video_rate), "-pass", "1", "-passlogfile", passlog,
