@@ -383,7 +383,7 @@ def convert(runner, input_path, fmt, output_path, requested_bytes, preset, prefe
                     temp_output.unlink()
                     width, height, fps, bitrate = encode_video_target(
                         runner, input_path, temp_output, work, fmt, internal, attempt=2,
-                        bitrate_override=corrected, seek=seek, clip=clip)
+                        bitrate_override=corrected, seek=seek, clip=clip, first_shape=(width, height))
                 if temp_output.stat().st_size > requested_bytes:
                     size = temp_output.stat().st_size
                     temp_output.unlink()

@@ -15,7 +15,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from lib.encoders import _video_shape, encode_video_quick, parse_ffmpeg_progress
+from lib.encoders import _video_shape, encode_video_quick, encode_video_target, parse_ffmpeg_progress
 from lib.backend import _convert_gif, _default_output, convert
 from lib.errors import Cancelled, OmaConvertError
 from lib.events import EventSink
@@ -26,7 +26,7 @@ from lib.optimizer import (
     size_text,
 )
 from lib.probe import parse_probe_json
-from lib.probe import MediaInfo
+from lib.probe import MediaInfo, probe_media
 from lib.process import ProcessRunner
 from lib.publish import publish_no_clobber
 
@@ -395,6 +395,47 @@ class ProcessRunnerTests(unittest.TestCase):
             self.assertEqual(process.stall_timeout(), 42.0)
         with mock.patch.dict(os.environ, {"OMACONVERT_STALL_TIMEOUT": "junk"}):
             self.assertEqual(process.stall_timeout(), process.DEFAULT_STALL_TIMEOUT)
+
+
+@unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg required")
+class TwoPassRetryTests(unittest.TestCase):
+    """A size retry at the same frame size reuses the pass-1 statistics: the
+    encoders accept them at another bitrate, so only pass 2 runs again."""
+
+    class Runner(ProcessRunner):
+        def __init__(self):
+            super().__init__(mock.Mock())
+            self.passes = []
+
+        def ffmpeg(self, args, duration, **fields):
+            self.passes.append((fields["pass"], args[args.index("-passlogfile") + 1]))
+            super().ffmpeg(args, duration, **fields)
+
+    def test_retry_runs_only_the_second_pass(self):
+        with tempfile.TemporaryDirectory(prefix="omaconvert-twopass-") as directory:
+            root = Path(directory)
+            source = root / "clip.mkv"
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=15",
+                            "-t", "2", "-c:v", "ffv1", str(source)], check=True)
+            info = probe_media(source, ProcessRunner(mock.Mock()))
+            for fmt in ("mp4", "webm"):
+                with self.subTest(fmt=fmt):
+                    runner = self.Runner()
+                    output = root / f"result.{fmt}"
+                    width, height, _fps, rate = encode_video_target(runner, source, output, info, fmt, 200_000)
+                    first_size = output.stat().st_size
+                    output.unlink()
+                    encode_video_target(runner, source, output, info, fmt, 200_000, attempt=2,
+                                        bitrate_override=rate // 2, first_shape=(width, height))
+                    self.assertEqual([number for number, _log in runner.passes], [1, 2, 2])
+                    self.assertEqual(len({log for _number, log in runner.passes}), 1, "attempt 1's log")
+                    self.assertLess(output.stat().st_size, first_size)
+                    self.assertEqual(probe_media(output, ProcessRunner(mock.Mock())).width, width)
+                    # Another frame size needs its own first pass.
+                    runner.passes.clear()
+                    encode_video_target(runner, source, output, info, fmt, 200_000, attempt=2,
+                                        bitrate_override=rate // 2, first_shape=(width + 2, height))
+                    self.assertEqual([number for number, _log in runner.passes], [1, 2])
 
 
 class TerminalMetadataTests(unittest.TestCase):

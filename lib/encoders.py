@@ -286,7 +286,11 @@ TARGET_AUDIO_RATE = 96_000
 
 
 def encode_video_target(runner, input_path, output, info, fmt, internal_target, attempt=1,
-                        bitrate_override=None, seek=0.0, clip=None):
+                        bitrate_override=None, seek=0.0, clip=None, first_shape=None):
+    """Two-pass encode at the bitrate for `internal_target` bytes. A retry
+    passes `first_shape`, the (width, height) of attempt 1: at the same
+    frame size its pass-1 statistics, which do not depend on the bitrate,
+    are reused and only the second pass runs again."""
     audio_rate = TARGET_AUDIO_RATE if info.audio else 0
     total_rate = internal_target * 8 / info.duration
     video_rate = int(bitrate_override or ((total_rate - audio_rate) * 0.96))
@@ -297,7 +301,8 @@ def encode_video_target(runner, input_path, output, info, fmt, internal_target, 
         )
     fps = min(info.fps, 30.0)
     width, height = _video_shape(info, video_rate, fps)
-    passlog = str(Path(output).with_name(f"passlog-{attempt}"))
+    reuse = attempt > 1 and first_shape == (width, height)
+    passlog = str(Path(output).with_name(f"passlog-{1 if reuse else attempt}"))
     vf = chain(f"fps={fps:.6g}", f"scale={width}:{height}:flags=lanczos", sdr_filter(info), "setsar=1")
     # 8-bit 4:2:0 whatever the source (10-bit phone clips, 4:4:4 screen
     # recordings): High 10/4:4:4 H.264 and VP9 profile 1/2 do not play in
@@ -317,7 +322,7 @@ def encode_video_target(runner, input_path, output, info, fmt, internal_target, 
     second = _base_ffmpeg() + _input_args(input_path, seek, clip) + ["-map", f"0:{info.stream_index}", "-map", "0:a:0?", "-vf", vf,
         *video_codec, "-b:v", str(video_rate), "-pass", "2", "-passlogfile", passlog,
         *audio_codec, "-progress", "pipe:1", str(output)]
-    for number, args in ((1, first), (2, second)):
+    for number, args in ((2, second),) if reuse else ((1, first), (2, second)):
         progress_fields = {
             "pass": number, "passes": 2, "attempt": attempt,
             "width": width, "height": height, "fps": fps,
