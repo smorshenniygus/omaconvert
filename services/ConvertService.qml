@@ -7,7 +7,6 @@ Item {
     id: root
     required property string executable
     readonly property bool busy: currentJob !== null || transitioning
-    property bool starting: false
     property bool cancelling: false
     property string operation: ""
     property string inputPath: ""
@@ -60,7 +59,6 @@ Item {
         terminalEvent = false
         cancelling = false
         operation = kind
-        starting = true
         lastExit = 0
         var job = jobComponent.createObject(root, {
             generation: ++nextGeneration,
@@ -226,7 +224,7 @@ Item {
             dependenciesReady = event.ok !== false
             if (event.version) backendVersion = String(event.version)
             notice = event.gifsicle === false ? "Tip: install gifsicle to make GIFs a little smaller." : ""
-        } else if (event.event === "warning") notice = event.message || ""
+        }
         else if (event.event === "candidate") { candidate = event; candidates = candidates.concat([event]).slice(-6) }
         else if (event.event === "complete") {
             job.terminalEvent = true
@@ -254,14 +252,12 @@ Item {
     }
     function exited(job, exitCode) {
         if (!isCurrent(job)) return
-        starting = false
         lastExit = exitCode
         job.exitDone = true
         job.maybeSettle()
     }
     function startFailed(job) {
         if (!isCurrent(job) || job.started) return
-        starting = false
         job.terminalEvent = true
         error = "Could not start Python 3. Check that python3 and the plugin backend are installed."
         job.exitDone = true
@@ -276,7 +272,6 @@ Item {
         var nextPath = pendingSelection
         if (nextPath) transitioning = true
         currentJob = null
-        starting = false
         if (operation === "batch")
             batch = batch.map(item => item.status === "working" || item.status === "queued"
                 ? Object.assign({}, item, { status: "stopped" }) : item)
@@ -435,7 +430,6 @@ Item {
                 onStarted: {
                     job.started = true
                     startup.stop()
-                    if (root.isCurrent(job)) root.starting = false
                     if (root.isCurrent(job) && root.cancelling) signal(15)
                 }
                 // Installed Quickshell metadata omits QProcess::ExitStatus.

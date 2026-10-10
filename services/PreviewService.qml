@@ -60,7 +60,7 @@ Item {
         if (sourceJob.running) sourceJob.running = false
         sourceJob.generation = generation
         sourceJob.command = ["python3", root.executable, "--preview", inputPath,
-                             "--preview-output", root.sourcePath, "--preview-size", "320"]
+                             "--preview-output", root.sourcePath, "--preview-size", String(Model.previewSize())]
         if (pos > 0) sourceJob.command = sourceJob.command.concat(["--preview-position", String(pos)])
         sourceJob.running = true
     }
@@ -77,7 +77,7 @@ Item {
         if (resultJob.running) resultJob.running = false
         resultJob.generation = generation
         resultJob.command = ["python3", root.executable, "--preview", inputPath,
-                             "--preview-output", root.resultPath, "--preview-size", "320"]
+                             "--preview-output", root.resultPath, "--preview-size", String(Model.previewSize())]
         resultJob.running = true
     }
     function forget(job, path) {
