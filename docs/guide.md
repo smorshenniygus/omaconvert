@@ -94,4 +94,6 @@ scripts/check.sh
 
 This runs the Python tests, the Qt Quick tests, `omarchy plugin validate` on the git-tracked files, and `qmllint` against the installed shell. The Python tests encode real clips with FFmpeg. They check byte limits, Unicode and bracketed file names, safe publishing on filesystems without hard links, cancellation and hung tools.
 
+Where things live: `lib/` is the backend and its JSON CLI. `services/Session.qml` holds what the window does (recipes, the command line and fields, the current screen, starting a job). `ConvertService.qml` and `PreviewService.qml` run the CLI. `OmaConvert.qml` is the window: it wires these to one component per section in `components/screens/`, built from `components/ui/` and styled by a single `Theme` object.
+
 After a change to the installed plugin, run `omarchy plugin update io.github.smorshenniygus.omaconvert --yes`, then `omarchy restart shell`. The shell caches plugin QML, and the window shows a warning while the loaded interface is older than the backend.
