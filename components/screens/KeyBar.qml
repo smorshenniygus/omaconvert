@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import "../../services"
-import "../../services/Model.js" as Model
 import "../ui"
 
 // Key bar: what the keys do on the screen showing right now.

@@ -3,7 +3,6 @@ import QtQuick
 import QtQuick.Layouts
 import qs.Ui as Ui
 import "../../services"
-import "../../services/Model.js" as Model
 import "../ui"
 
 // Title bar: the app, its version, what the window is doing, close.

@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtCore
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -41,7 +40,7 @@ Item {
     readonly property var panelWindow: window
     readonly property var panelCard: card
     readonly property var trimControl: trimBar
-    readonly property var commandField: commandInput
+    readonly property var commandField: commandLine.field
     // Readable line length at any window size: narrow windows use every
     // pixel, wide/fullscreen ones get a centered column instead of a
     // stretched single row.
@@ -89,12 +88,6 @@ Item {
         }
         service.loadStatus()
         Qt.callLater(() => choose.forceActiveFocus())
-    }
-    function commandReturn(event) {
-        // Ctrl+Enter belongs to the window shortcut.
-        if (event.modifiers & Qt.ControlModifier) { event.accepted = false; return }
-        event.accepted = true
-        root.session.runActive()
     }
     function chooseVideo() {
         if (!service.busy && !filePicker.running) filePicker.running = true
@@ -170,7 +163,7 @@ Item {
                 Qt.callLater(() => {
                     trimBar.reset()
                     root.session.resetRecipes()
-                    if (root.opened) commandInput.forceActiveFocus()
+                    if (root.opened) commandLine.field.forceActiveFocus()
                 })
             } else if (!service.metadata) {
                 preview.clearSource()
@@ -190,9 +183,9 @@ Item {
         function onPasted(result) {
             if (result.kind === "file") service.selectFiles(result.paths && result.paths.length ? result.paths : [result.path])
             else if (result.kind === "text" && root.session.idleWithFile) {
-                commandInput.insert(commandInput.cursorPosition, result.text)
-                root.session.editCommand(commandInput.text)
-                commandInput.forceActiveFocus()
+                commandLine.field.insert(commandLine.field.cursorPosition, result.text)
+                root.session.editCommand(commandLine.field.text)
+                commandLine.field.forceActiveFocus()
             } else root.pasteNote = result.kind === "text"
                 ? "The clipboard holds text, not a file or an image."
                 : "Nothing to paste: copy an image, a screenshot or a file first."
@@ -454,549 +447,26 @@ Item {
                             Layout.fillWidth: true
                             visible: root.session.idleWithFile
                             spacing: 8
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 8
-                                Ui.TextField {
-                                    id: commandInput
-                                    Layout.fillWidth: true
-                                    foreground: root.theme.fg
-                                    accent: root.theme.accent
-                                    horizontalPadding: root.spacing.controlPaddingX + root.theme.px(1.5)
-                                    font.family: root.theme.family
-                                    font.pixelSize: root.theme.px(1.167)
-                                    font.bold: true
-                                    selectByMouse: true
-                                    placeholderText: root.session.inputKind === "image" ? "webp  ·  png 500kb  ·  jpg" : "gif 30mb  ·  mp4 quick  ·  png frames 10fps"
-                                    Accessible.name: "What to make, for example gif 30mb"
-                                    text: root.session.commandText
-                                    onTextEdited: root.session.editCommand(text)
-                                    Keys.onPressed: event => {
-                                        if (event.matches(StandardKey.Paste)) { root.pasteFromClipboard(); event.accepted = true }
-                                    }
-                                    Keys.onUpPressed: event => { root.session.moveSelection(-1); event.accepted = true }
-                                    Keys.onDownPressed: event => { root.session.moveSelection(1); event.accepted = true }
-                                    Keys.onReturnPressed: event => root.commandReturn(event)
-                                    Keys.onEnterPressed: event => root.commandReturn(event)
-                                    Keys.onEscapePressed: event => {
-                                        if (text === "") { event.accepted = false; return }
-                                        root.session.editCommand("")
-                                        event.accepted = true
-                                    }
-                                    Text {
-                                        anchors.left: parent.left
-                                        anchors.leftMargin: root.spacing.controlPaddingX
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: "❯"
-                                        color: commandInput.activeFocus ? root.theme.focus : root.theme.faint
-                                        font.family: root.theme.family
-                                        font.pixelSize: root.theme.px(1.167)
-                                        font.bold: true
-                                    }
-                                }
-                                // Settings: full height of the line, square.
-                                Rectangle {
-                                    id: settingsButton
-                                    Layout.preferredWidth: commandInput.height
-                                    Layout.preferredHeight: commandInput.height
-                                    color: root.session.advanced ? root.theme.alpha(root.theme.focus, 0.2)
-                                         : (settingsMouse.containsMouse ? root.theme.alpha(root.theme.fg, 0.08) : root.theme.surface)
-                                    border.width: 1
-                                    border.color: root.session.advanced || settingsButton.activeFocus ? root.theme.focus : root.theme.alpha(root.theme.fg, 0.3)
-                                    activeFocusOnTab: true
-                                    Accessible.role: Accessible.Button
-                                    Accessible.name: root.session.advanced ? "Back to recipes" : "All settings"
-                                    Keys.onReturnPressed: root.session.toggleAdvanced()
-                                    Keys.onEnterPressed: root.session.toggleAdvanced()
-                                    Keys.onSpacePressed: root.session.toggleAdvanced()
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: root.session.advanced ? "󰅃" : "󰒓"
-                                        color: root.session.advanced ? root.theme.focus : root.theme.fg
-                                        font.family: root.theme.iconFamily
-                                        font.pixelSize: root.theme.px(1.25)
-                                    }
-                                    MouseArea {
-                                        id: settingsMouse
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: root.session.toggleAdvanced()
-                                    }
-                                    Ui.PanelToolTip {
-                                        visible: settingsMouse.containsMouse
-                                        text: root.session.advanced ? "Back to recipes  ·  Ctrl+," : "All settings  ·  Ctrl+,"
-                                    }
-                                }
+                            CommandLine {
+                                id: commandLine
+                                theme: root.theme
+                                session: root.session
+                                onPasteRequested: root.pasteFromClipboard()
                             }
-                            // Always one row tall: typing never pushes the list down.
-                            Flow {
-                                Layout.fillWidth: true
-                                spacing: 6
-                                MonoText {
-                                    theme: root.theme
-                                    size: 0.833
-                                    text: root.session.matched.chips.length > 0 ? "understood"
-                                        : (root.session.inputKind === "image" ? "type a format and size  ·  jpg 200kb  ·  webp" : "type a format and size  ·  gif 10mb  ·  mp4 quick")
-                                    color: root.theme.faint
-                                    height: 20
-                                    verticalAlignment: Text.AlignVCenter
-                                }
-                                Repeater {
-                                    model: root.session.matched.chips
-                                    delegate: Rectangle {
-                                        id: chip
-                                        required property var modelData
-                                        implicitWidth: chipText.implicitWidth + 14
-                                        implicitHeight: 20
-                                        color: chip.modelData.ok ? root.theme.alpha(root.theme.sage, 0.18) : "transparent"
-                                        border.width: 1
-                                        border.color: chip.modelData.ok ? root.theme.alpha(root.theme.sage, 0.56) : root.theme.line
-                                        MonoText {
-                                            id: chipText
-                                            theme: root.theme
-                                            size: 0.833
-                                            anchors.centerIn: parent
-                                            text: chip.modelData.text
-                                            color: chip.modelData.ok ? root.theme.mist : root.theme.faint
-                                            font.strikeout: !chip.modelData.ok
-                                        }
-                                    }
-                                }
+                            RecipeList {
+                                theme: root.theme
+                                session: root.session
+                                service: root.convertService
+                                homeDir: root.homeDir
                             }
-
-                            // Recipes for this file, filtered by the command line.
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                visible: !root.session.advanced
-                                spacing: 0
-                                Repeater {
-                                    model: root.session.matched.rows
-                                    delegate: Rectangle {
-                                        id: recipeRow
-                                        required property var modelData
-                                        required property int index
-                                        readonly property bool current: recipeRow.index === root.session.selectedRow
-                                        readonly property bool blocked: recipeRow.modelData.problem !== ""
-                                        readonly property string detail: Model.recipeDetail(recipeRow.modelData.fields, root.session.inputKind, service.metadata, root.session.convertSeconds)
-                                        readonly property string note: Model.recipeNote(recipeRow.modelData.fields, root.session.inputKind, root.session.convertSeconds)
-                                        Layout.fillWidth: true
-                                        implicitHeight: recipeLine.implicitHeight + 18
-                                        color: recipeRow.current ? root.theme.alpha(root.theme.focus, 0.08)
-                                             : (recipeMouse.containsMouse ? root.theme.surface : "transparent")
-                                        Accessible.role: Accessible.Button
-                                        Accessible.name: recipeRow.modelData.title + ". " + (recipeRow.modelData.problem || recipeRow.detail)
-                                        Rectangle { visible: recipeRow.current; width: 2; height: parent.height; color: root.theme.focus }
-                                        Rectangle { visible: !recipeRow.current; anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.theme.line }
-                                        RowLayout {
-                                            id: recipeLine
-                                            anchors.left: parent.left
-                                            anchors.right: parent.right
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            anchors.leftMargin: 14
-                                            anchors.rightMargin: 14
-                                            spacing: 14
-                                            MonoText {
-                                                theme: root.theme
-                                                size: 0.917
-                                                text: recipeRow.index < 9 ? String(recipeRow.index + 1) : ""
-                                                color: recipeRow.current ? root.theme.focus : root.theme.faint
-                                                font.bold: true
-                                            }
-                                            MonoText {
-                                                theme: root.theme
-                                                size: 0.833
-                                                Layout.preferredWidth: root.theme.px(3.5)
-                                                text: (recipeRow.modelData.fields.format === Model.SEQUENCE ? "SEQ" : recipeRow.modelData.fields.format).toUpperCase()
-                                                color: root.theme.mist
-                                                font.bold: true
-                                                font.letterSpacing: 1
-                                            }
-                                            ColumnLayout {
-                                                Layout.fillWidth: true
-                                                spacing: 2
-                                                MonoText {
-                                                    theme: root.theme
-                                                    size: 1.083
-                                                    Layout.fillWidth: true
-                                                    text: recipeRow.modelData.title
-                                                    opacity: recipeRow.blocked ? 0.5 : 1
-                                                    font.bold: true
-                                                    elide: Text.ElideRight
-                                                }
-                                                MonoText {
-                                                    theme: root.theme
-                                                    size: 0.833
-                                                    Layout.fillWidth: true
-                                                    text: recipeRow.modelData.problem || recipeRow.note || recipeRow.detail
-                                                    color: recipeRow.blocked ? root.theme.urgent : (recipeRow.note ? root.theme.fg : root.theme.dim)
-                                                    wrapMode: Text.WordWrap
-                                                }
-                                            }
-                                            MonoText {
-                                                theme: root.theme
-                                                size: 0.833
-                                                text: recipeRow.modelData.pinned ? "★ pinned" : (recipeRow.modelData.last ? "last used" : (recipeRow.modelData.custom ? "as typed" : ""))
-                                                visible: text !== ""
-                                                color: recipeRow.current ? root.theme.fg : root.theme.faint
-                                            }
-                                            MonoText {
-                                                theme: root.theme
-                                                size: 1.083
-                                                text: "⏎"
-                                                visible: recipeRow.current && !recipeRow.blocked
-                                                color: root.theme.focus
-                                                font.bold: true
-                                            }
-                                        }
-                                        MouseArea {
-                                            id: recipeMouse
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            cursorShape: recipeRow.blocked ? Qt.ArrowCursor : Qt.PointingHandCursor
-                                            // Only a moving pointer selects: a row sliding under a
-                                            // still cursor must not change the selection.
-                                            onPositionChanged: if (root.session.selectedRow !== recipeRow.index) root.session.selectedRow = recipeRow.index
-                                            onClicked: root.session.runRecipe(recipeRow.index)
-                                        }
-                                    }
-                                }
-                                Hint {
-                                    theme: root.theme
-                                    Layout.topMargin: 6
-                                    visible: text !== ""
-                                    text: root.session.matched.note
-                                    color: root.theme.fg
-                                }
-                                Hint {
-                                    theme: root.theme
-                                    Layout.topMargin: 6
-                                    visible: root.session.outputFolder !== ""
-                                    text: "saves to " + Model.folderLabel(root.session.outputFolder, root.homeDir)
-                                }
-                            }
-
-                            // Every field; edits rewrite the command line.
-                            Rectangle {
-                                Layout.fillWidth: true
-                                visible: root.session.advanced
-                                implicitHeight: fields.implicitHeight + 2
-                                color: root.theme.alpha(root.theme.fg, 0.02)
-                                border.width: 1
-                                border.color: root.theme.line
-                                ColumnLayout {
-                                    id: fields
-                                    x: 1
-                                    y: 1
-                                    width: parent.width - 2
-                                    spacing: 0
-                                    FieldRow {
-                                        theme: root.theme
-                                        label: "FORMAT"
-                                        Flow {
-                                            Layout.fillWidth: true
-                                            spacing: 8
-                                            Repeater {
-                                                model: Model.formatGroups(root.session.inputKind, service.capabilities)
-                                                delegate: Segments {
-                                                    id: formatGroup
-                                                    required property var modelData
-                                                    options: formatGroup.modelData.items.map(item => ({ value: item, label: item === Model.SEQUENCE ? "SEQ" : item.toUpperCase() }))
-                                                    value: formatGroup.modelData.items.indexOf(root.session.formatValue) >= 0 ? root.session.formatValue : ""
-                                                    theme: root.theme
-                                                    Accessible.name: formatGroup.modelData.title + " formats"
-                                                    onChanged: v => { root.session.formatValue = v; root.session.syncCommand() }
-                                                }
-                                            }
-                                        }
-                                        Hint {
-                                            theme: root.theme
-                                            text: root.session.unavailableFormats !== "" ? root.session.unavailableFormats
-                                                : (root.session.inputKind === "image" ? "image formats" : "video formats  ·  stills  ·  SEQ = every frame as PNG")
-                                            color: root.theme.faint
-                                            font.pixelSize: root.theme.px(0.833)
-                                        }
-                                    }
-                                    FieldRow {
-                                        theme: root.theme
-                                        label: "MODE"
-                                        enabled: root.session.formatValue !== Model.SEQUENCE
-                                        Segments {
-                                            options: [{ value: "0", label: "target size" }, { value: "1", label: "quick" }]
-                                            value: String(root.session.modeIndex)
-                                            theme: root.theme
-                                            Accessible.name: "Conversion mode"
-                                            onChanged: v => { root.session.modeIndex = Number(v); root.session.syncCommand() }
-                                        }
-                                    }
-                                    FieldRow {
-                                        theme: root.theme
-                                        label: "MAX SIZE"
-                                        enabled: root.session.sizeShown
-                                        RowLayout {
-                                            spacing: 8
-                                            Ui.TextField {
-                                                id: sizeInput
-                                                text: root.session.sizeText
-                                                Layout.preferredWidth: root.theme.px(6.5)
-                                                foreground: root.theme.fg
-                                                accent: root.theme.accent
-                                                font.family: root.theme.family
-                                                font.bold: true
-                                                selectByMouse: true
-                                                horizontalAlignment: TextInput.AlignRight
-                                                Accessible.name: "Maximum file size"
-                                                inputMethodHints: Qt.ImhFormattedNumbersOnly
-                                                onTextEdited: { root.session.sizeText = text; root.session.syncCommand() }
-                                            }
-                                            Segments {
-                                                options: ["MB", "KB"]
-                                                value: root.session.unitText
-                                                theme: root.theme
-                                                Accessible.name: "Size unit"
-                                                onChanged: v => { root.session.unitIndex = v === "KB" ? 1 : 0; root.session.syncCommand() }
-                                            }
-                                        }
-                                        // Common upload limits, one click each.
-                                        Flow {
-                                            Layout.fillWidth: true
-                                            spacing: 6
-                                            MonoText {
-                                                theme: root.theme
-                                                size: 0.833
-                                                text: "presets"
-                                                color: root.theme.faint
-                                                height: 18
-                                                verticalAlignment: Text.AlignVCenter
-                                            }
-                                            Repeater {
-                                                model: Model.SIZE_PRESETS
-                                                delegate: Rectangle {
-                                                    id: presetChip
-                                                    required property var modelData
-                                                    readonly property bool on: root.session.sizeText === String(presetChip.modelData.size) && root.session.unitText === presetChip.modelData.unit
-                                                    implicitWidth: presetText.implicitWidth + 12
-                                                    implicitHeight: 18
-                                                    color: presetMouse.containsMouse ? root.theme.surface : "transparent"
-                                                    border.width: 1
-                                                    border.color: presetChip.on ? root.theme.focus : root.theme.alpha(root.theme.fg, 0.15)
-                                                    MonoText {
-                                                        id: presetText
-                                                        theme: root.theme
-                                                        size: 0.833
-                                                        anchors.centerIn: parent
-                                                        text: presetChip.modelData.label
-                                                        color: presetChip.on ? root.theme.focus : root.theme.dim
-                                                    }
-                                                    MouseArea {
-                                                        id: presetMouse
-                                                        anchors.fill: parent
-                                                        hoverEnabled: true
-                                                        cursorShape: Qt.PointingHandCursor
-                                                        onClicked: {
-                                                            root.session.sizeText = String(presetChip.modelData.size)
-                                                            root.session.unitIndex = presetChip.modelData.unit === "KB" ? 1 : 0
-                                                            root.session.syncCommand()
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        Hint {
-                                            theme: root.theme
-                                            visible: !Model.validSize(root.session.sizeText)
-                                            text: "Enter a size greater than zero, for example 50 or 0.5."
-                                            color: root.theme.urgent
-                                            font.pixelSize: root.theme.px(0.833)
-                                        }
-                                    }
-                                    FieldRow {
-                                        theme: root.theme
-                                        label: "PREFER"
-                                        enabled: root.session.sizeShown && root.session.formatValue === "GIF" && root.session.inputKind !== "image"
-                                        Segments {
-                                            options: [{ value: "0", label: "motion" }, { value: "1", label: "balanced" }, { value: "2", label: "detail" }]
-                                            value: String(root.session.preferenceIndex)
-                                            theme: root.theme
-                                            Accessible.name: "Quality preference"
-                                            onChanged: v => { root.session.preferenceIndex = Number(v); root.session.syncCommand() }
-                                        }
-                                        Hint {
-                                            theme: root.theme
-                                            text: ["GIF only  ·  keep smooth motion, drop resolution first",
-                                                   "GIF only  ·  trade resolution and frame rate evenly",
-                                                   "GIF only  ·  keep a sharp picture, drop frames first"][root.session.preferenceIndex] || ""
-                                            color: root.theme.faint
-                                            font.pixelSize: root.theme.px(0.833)
-                                        }
-                                    }
-                                    FieldRow {
-                                        theme: root.theme
-                                        label: "QUALITY"
-                                        visible: root.session.formatValue !== Model.SEQUENCE
-                                        enabled: root.session.modeIndex === 1
-                                        Segments {
-                                            options: [{ value: "0", label: "small" }, { value: "1", label: "balanced" }, { value: "2", label: "high" }]
-                                            value: String(root.session.presetIndex)
-                                            theme: root.theme
-                                            Accessible.name: "Quality preset"
-                                            onChanged: v => { root.session.presetIndex = Number(v); root.session.syncCommand() }
-                                        }
-                                    }
-                                    FieldRow {
-                                        theme: root.theme
-                                        label: "FRAMES"
-                                        visible: root.session.formatValue === Model.SEQUENCE
-                                        Segments {
-                                            options: [{ value: "0", label: "every" }, { value: "24", label: "24 fps" }, { value: "10", label: "10 fps" }, { value: "5", label: "5 fps" }, { value: "1", label: "1 fps" }]
-                                            value: String(root.session.sequenceFps)
-                                            theme: root.theme
-                                            Accessible.name: "Frames per second to keep"
-                                            onChanged: v => { root.session.sequenceFps = Number(v); root.session.syncCommand() }
-                                        }
-                                    }
-                                    FieldRow {
-                                        theme: root.theme
-                                        label: "SAVE TO"
-                                        RowLayout {
-                                            Layout.fillWidth: true
-                                            spacing: 8
-                                            Text {
-                                                text: "󰉋"
-                                                color: root.theme.mist
-                                                font.family: root.theme.iconFamily
-                                                font.pixelSize: root.theme.px(1.083)
-                                            }
-                                            MonoText {
-                                                theme: root.theme
-                                                Layout.fillWidth: true
-                                                text: root.session.outputFolder ? Model.folderLabel(root.session.outputFolder, root.homeDir)
-                                                    : (service.inputPath ? "next to source  ·  " + Model.folderLabel(Model.dirname(service.inputPath), root.homeDir) : "next to source")
-                                                color: root.session.outputFolder ? root.theme.fg : root.theme.dim
-                                                font.bold: root.session.outputFolder !== ""
-                                                elide: Text.ElideLeft
-                                                Accessible.name: "Output folder: " + text
-                                            }
-                                            TextButton {
-                                                theme: root.theme
-                                                label: folderPicker.running ? "choosing…" : "change"
-                                                enabled: !root.pickerBusy
-                                                onClicked: root.chooseFolder()
-                                            }
-                                            TextButton {
-                                                theme: root.theme
-                                                visible: root.session.outputFolder !== ""
-                                                label: "×"
-                                                Accessible.name: "Save next to the source again"
-                                                onClicked: root.session.setOutputFolder("")
-                                            }
-                                        }
-                                        Row {
-                                            spacing: 8
-                                            activeFocusOnTab: true
-                                            Accessible.role: Accessible.CheckBox
-                                            Accessible.name: "Remember this folder"
-                                            Keys.onSpacePressed: root.session.toggleRememberFolder()
-                                            Rectangle {
-                                                width: 11
-                                                height: 11
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                color: root.session.prefs.rememberFolder ? root.theme.sage : "transparent"
-                                                border.width: 1
-                                                border.color: parent.activeFocus ? root.theme.focus : (root.session.prefs.rememberFolder ? root.theme.sage : root.theme.alpha(root.theme.fg, 0.4))
-                                            }
-                                            MonoText {
-                                                theme: root.theme
-                                                size: 0.833
-                                                text: "remember this folder"
-                                                color: root.theme.dim
-                                                MouseArea {
-                                                    anchors.fill: parent
-                                                    anchors.leftMargin: -19
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: root.session.toggleRememberFolder()
-                                                }
-                                            }
-                                        }
-                                    }
-                                    // What Enter will make, and the button that makes it.
-                                    Rectangle {
-                                        Layout.fillWidth: true
-                                        implicitHeight: summaryRow.implicitHeight + 24
-                                        color: root.theme.alpha(root.theme.focus, 0.06)
-                                        RowLayout {
-                                            id: summaryRow
-                                            anchors.left: parent.left
-                                            anchors.right: parent.right
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            anchors.leftMargin: 14
-                                            anchors.rightMargin: 14
-                                            spacing: 12
-                                            ColumnLayout {
-                                                Layout.fillWidth: true
-                                                spacing: 3
-                                                SectionLabel { theme: root.theme; text: "WILL MAKE"; font.pixelSize: root.theme.px(0.75) }
-                                                MonoText {
-                                                    theme: root.theme
-                                                    Layout.fillWidth: true
-                                                    text: Model.outputName(service.inputPath, root.session.currentFields())
-                                                    font.bold: true
-                                                    elide: Text.ElideMiddle
-                                                }
-                                                MonoText {
-                                                    theme: root.theme
-                                                    size: 0.833
-                                                    Layout.fillWidth: true
-                                                    text: root.session.fieldsRecipe.problem || root.session.fieldsRecipe.note || root.session.fieldsRecipe.detail
-                                                    color: root.session.fieldsRecipe.problem ? root.theme.urgent : root.theme.dim
-                                                    wrapMode: Text.WordWrap
-                                                }
-                                            }
-                                            TextButton {
-                                                theme: root.theme
-                                                key: "★"
-                                                label: root.session.activePinned ? "unpin" : "pin"
-                                                Accessible.name: root.session.activePinned ? "Unpin this recipe" : "Pin this recipe to the top of the list"
-                                                onClicked: root.session.togglePin()
-                                            }
-                                            Rectangle {
-                                                id: convertButton
-                                                implicitWidth: convertRow.implicitWidth + 28
-                                                implicitHeight: convertRow.implicitHeight + 18
-                                                color: root.session.canConvert ? (convertMouse.pressed ? Qt.darker(root.theme.focus, 1.15) : root.theme.focus) : root.theme.alpha(root.theme.fg, 0.12)
-                                                border.width: convertButton.activeFocus ? 2 : 0
-                                                border.color: root.theme.fg
-                                                activeFocusOnTab: root.session.canConvert
-                                                Accessible.role: Accessible.Button
-                                                Accessible.name: "Convert"
-                                                Keys.onReturnPressed: root.session.startConversion()
-                                                Keys.onEnterPressed: root.session.startConversion()
-                                                Keys.onSpacePressed: root.session.startConversion()
-                                                Row {
-                                                    id: convertRow
-                                                    anchors.centerIn: parent
-                                                    spacing: 8
-                                                    Repeater {
-                                                        model: ["⏎", "convert"]
-                                                        delegate: MonoText {
-                                                            theme: root.theme
-                                                            required property string modelData
-                                                            text: modelData
-                                                            color: root.session.canConvert ? root.theme.bg : root.theme.faint
-                                                            font.bold: true
-                                                        }
-                                                    }
-                                                }
-                                                MouseArea {
-                                                    id: convertMouse
-                                                    anchors.fill: parent
-                                                    cursorShape: root.session.canConvert ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                                    onClicked: root.session.startConversion()
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                            SettingsPanel {
+                                theme: root.theme
+                                session: root.session
+                                service: root.convertService
+                                homeDir: root.homeDir
+                                pickerBusy: root.pickerBusy
+                                choosingFolder: folderPicker.running
+                                onChooseFolderRequested: root.chooseFolder()
                             }
                         }
 

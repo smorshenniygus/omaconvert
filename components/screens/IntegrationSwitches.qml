@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import "../../services"
-import "../../services/Model.js" as Model
 import "../ui"
 
 // Omarchy integration, offered before a file is chosen. Each switch is
