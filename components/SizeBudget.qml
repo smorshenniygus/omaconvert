@@ -25,39 +25,34 @@ ColumnLayout {
         Layout.fillWidth: true
         visible: !root.done
         spacing: 8
-        Text {
-            textFormat: Text.PlainText
+        MonoText {
+            theme: root.theme
+            size: 1.333
             text: Model.compactSize(root.fromBytes)
-            color: root.theme.fg
-            font.family: root.theme.family
-            font.pixelSize: root.theme.px(1.333)
             font.bold: true
         }
-        Text {
-            textFormat: Text.PlainText
+        MonoText {
+            theme: root.theme
+            size: 1.167
             text: "→"
-            color: root.theme.alpha(root.theme.fg, 0.32)
-            font.family: root.theme.family
-            font.pixelSize: root.theme.px(1.167)
+            color: root.theme.faint
         }
-        Text {
-            textFormat: Text.PlainText
+        MonoText {
+            theme: root.theme
+            size: 1.333
             text: root.limitBytes > 0 ? "≤ " + Model.sizeLabel(root.limitBytes) : "no size limit"
-            color: root.limitBytes > 0 ? root.theme.focus : root.theme.alpha(root.theme.fg, 0.55)
-            font.family: root.theme.family
-            font.pixelSize: root.theme.px(1.333)
+            color: root.limitBytes > 0 ? root.theme.focus : root.theme.dim
             font.bold: true
         }
         Item { Layout.fillWidth: true }
-        Text {
-            textFormat: Text.PlainText
+        MonoText {
+            theme: root.theme
+            size: 0.917
             text: root.limitBytes <= 0 ? "quality preset"
                 : (root.fromBytes > root.limitBytes
                    ? "−" + Math.ceil((1 - root.limitBytes / root.fromBytes) * 100) + "% to cut"
                    : "already fits")
-            color: root.theme.alpha(root.theme.fg, 0.55)
-            font.family: root.theme.family
-            font.pixelSize: root.theme.px(0.917)
+            color: root.theme.dim
         }
     }
     Item {

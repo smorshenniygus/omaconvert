@@ -33,21 +33,17 @@ Rectangle {
             border.width: 1
             border.color: check.activeFocus ? check.theme.focus : (check.checked ? check.theme.sage : check.theme.alpha(check.theme.fg, 0.4))
         }
-        Text {
-            textFormat: Text.PlainText
+        MonoText {
+            theme: check.theme
             text: check.label
             color: check.checked ? check.theme.fg : check.theme.dim
-            font.family: check.theme.family
-            font.pixelSize: check.theme.px(1)
             font.bold: check.checked
         }
-        Text {
-            textFormat: Text.PlainText
+        MonoText {
+            theme: check.theme
             visible: text !== ""
             text: check.detail
             color: check.theme.focus
-            font.family: check.theme.family
-            font.pixelSize: check.theme.px(1)
             font.bold: true
         }
         Item { Layout.fillWidth: true }

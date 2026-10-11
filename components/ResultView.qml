@@ -30,33 +30,29 @@ ColumnLayout {
     ColumnLayout {
         Layout.fillWidth: true
         spacing: 4
-        Text {
-            textFormat: Text.PlainText
+        MonoText {
+            theme: root.theme
+            size: 1.083
             Layout.fillWidth: true
             text: Model.name(root.result.path || "") + (root.result.kind === "sequence" ? "/" : "")
             color: root.theme.dim
-            font.family: root.theme.family
-            font.pixelSize: root.theme.px(1.083)
             elide: Text.ElideMiddle
         }
         RowLayout {
             spacing: 10
-            Text {
-                textFormat: Text.PlainText
+            MonoText {
+                theme: root.theme
+                size: 3.6
                 text: root.sizeParts[0] || ""
-                color: root.theme.fg
-                font.family: root.theme.family
-                font.pixelSize: root.theme.px(3.6)
                 font.bold: true
             }
-            Text {
-                textFormat: Text.PlainText
+            MonoText {
+                theme: root.theme
+                size: 1.333
                 Layout.alignment: Qt.AlignBottom
                 Layout.bottomMargin: 8
                 text: root.sizeParts[1] || ""
                 color: root.theme.dim
-                font.family: root.theme.family
-                font.pixelSize: root.theme.px(1.333)
             }
             Rectangle {
                 visible: root.fits || root.savings !== ""
@@ -67,20 +63,20 @@ ColumnLayout {
                 color: root.theme.alpha(root.theme.sage, 0.22)
                 border.width: 1
                 border.color: root.theme.sage
-                Text {
+                MonoText {
                     id: badge
+                    theme: root.theme
+                    size: 0.917
                     anchors.centerIn: parent
-                    textFormat: Text.PlainText
                     text: root.fits ? "✓ fits " + Model.sizeLabel(root.limitBytes) : root.savings
                     color: root.theme.mist
-                    font.family: root.theme.family
-                    font.pixelSize: root.theme.px(0.917)
                     font.bold: true
                 }
             }
         }
-        Text {
-            textFormat: Text.PlainText
+        MonoText {
+            theme: root.theme
+            size: 0.833
             Layout.fillWidth: true
             text: [root.savings,
                    root.result.width ? root.result.width + "×" + root.result.height : "",
@@ -89,8 +85,6 @@ ColumnLayout {
                    root.result.frames ? root.result.frames + " frames" : "",
                    root.trimText].filter(part => part !== "").join("  ·  ")
             color: root.theme.faint
-            font.family: root.theme.family
-            font.pixelSize: root.theme.px(0.833)
             wrapMode: Text.WordWrap
         }
     }

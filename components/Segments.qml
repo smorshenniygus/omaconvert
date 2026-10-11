@@ -68,14 +68,13 @@ Rectangle {
                     height: parent.height
                     color: root.theme.alpha(root.theme.fg, 0.15)
                 }
-                Text {
+                MonoText {
                     id: label
+                    theme: root.theme
+                    size: 0.917
                     anchors.centerIn: parent
-                    textFormat: Text.PlainText
                     text: root.optionLabel(cell.modelData)
-                    color: cell.on ? root.theme.fg : root.theme.alpha(root.theme.fg, 0.55)
-                    font.family: root.theme.family
-                    font.pixelSize: root.theme.px(0.917)
+                    color: cell.on ? root.theme.fg : root.theme.dim
                     font.bold: cell.on
                 }
                 MouseArea {

@@ -92,31 +92,28 @@ ColumnLayout {
     RowLayout {
         Layout.fillWidth: true
         spacing: 8
-        Text {
-            textFormat: Text.PlainText
+        MonoText {
+            theme: root.theme
+            size: 0.917
             text: "IN " + Model.timeText(root.startTime)
             color: root.theme.mist
-            font.family: root.theme.family
-            font.pixelSize: root.theme.px(0.917)
             font.bold: true
         }
-        Text {
-            textFormat: Text.PlainText
+        MonoText {
+            theme: root.theme
+            size: 0.917
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignHCenter
             text: Number(Math.max(0, root.endTime - root.startTime)).toFixed(1) + " s of "
                   + Number(root.duration).toFixed(1) + " s"
             color: root.theme.dim
-            font.family: root.theme.family
-            font.pixelSize: root.theme.px(0.917)
             elide: Text.ElideRight
         }
-        Text {
-            textFormat: Text.PlainText
+        MonoText {
+            theme: root.theme
+            size: 0.917
             text: "OUT " + Model.timeText(root.endTime)
             color: root.theme.mist
-            font.family: root.theme.family
-            font.pixelSize: root.theme.px(0.917)
             font.bold: true
         }
     }
@@ -236,14 +233,13 @@ ColumnLayout {
             }
         }
     }
-    Text {
-        textFormat: Text.PlainText
+    MonoText {
+        theme: root.theme
+        size: 0.917
         Layout.fillWidth: true
         visible: !root.valid
         text: "Pick an interval of at least 0.1 seconds."
         color: root.theme.urgent
-        font.family: root.theme.family
-        font.pixelSize: root.theme.px(0.917)
         wrapMode: Text.WordWrap
     }
 }

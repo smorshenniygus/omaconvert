@@ -36,22 +36,18 @@ Rectangle {
             font.family: act.theme.iconFamily
             font.pixelSize: act.theme.px(1.167)
         }
-        Text {
-            textFormat: Text.PlainText
+        MonoText {
+            theme: act.theme
             Layout.fillWidth: true
             text: act.label
-            color: act.theme.fg
-            font.family: act.theme.family
-            font.pixelSize: act.theme.px(1)
             font.bold: act.primary
             elide: Text.ElideRight
         }
-        Text {
-            textFormat: Text.PlainText
+        MonoText {
+            theme: act.theme
+            size: 0.917
             text: act.key
             color: act.primary ? act.theme.focus : act.theme.faint
-            font.family: act.theme.family
-            font.pixelSize: act.theme.px(0.917)
             font.bold: true
         }
     }

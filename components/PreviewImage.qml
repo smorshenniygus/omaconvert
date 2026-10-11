@@ -31,24 +31,22 @@ ColumnLayout {
         Layout.fillWidth: true
         visible: root.showHeader
         spacing: 8
-        Text {
-            textFormat: Text.PlainText
+        MonoText {
+            theme: root.theme
+            size: 0.833
             text: root.title.toUpperCase()
             color: root.theme.faint
-            font.family: root.theme.family
-            font.pixelSize: root.theme.px(0.833)
             font.bold: true
             font.letterSpacing: 2
             Layout.fillWidth: true
             elide: Text.ElideRight
         }
-        Text {
-            textFormat: Text.PlainText
+        MonoText {
+            theme: root.theme
+            size: 0.833
             text: root.meta
             visible: root.meta !== ""
             color: root.theme.dim
-            font.family: root.theme.family
-            font.pixelSize: root.theme.px(0.833)
         }
     }
     Rectangle {
@@ -70,7 +68,7 @@ ColumnLayout {
                 width: root.hasFrame ? image.paintedWidth : 0
                 height: root.hasFrame ? image.paintedHeight : 0
                 visible: width > 0
-                property color light: Qt.tint(root.theme.bg, root.theme.alpha(root.theme.fg, 0.16))
+                property color light: Qt.tint(root.theme.bg, root.theme.line)
                 property color dark: Qt.tint(root.theme.bg, root.theme.alpha(root.theme.fg, 0.08))
                 onPaint: {
                     var ctx = getContext("2d")
@@ -111,14 +109,13 @@ ColumnLayout {
             visible: root.dimmed < 1
             color: root.theme.alpha(root.theme.bg, 1 - root.dimmed)
         }
-        Text {
+        MonoText {
+            theme: root.theme
+            size: 0.917
             anchors.centerIn: parent
-            textFormat: Text.PlainText
             text: root.loading ? "Loading preview…" : "No preview"
             visible: !root.hasFrame
             color: root.theme.dim
-            font.family: root.theme.family
-            font.pixelSize: root.theme.px(0.917)
         }
         Chip {
             visible: root.overlayText !== ""
@@ -160,12 +157,11 @@ ColumnLayout {
                 anchors.verticalCenter: parent.verticalCenter
                 color: chip.dot
             }
-            Text {
-                textFormat: Text.PlainText
+            MonoText {
+                theme: root.theme
+                size: 0.917
                 text: chip.text
                 color: chip.textColor
-                font.family: root.theme.family
-                font.pixelSize: root.theme.px(0.917)
                 font.bold: chip.bold
             }
         }

@@ -23,21 +23,18 @@ Rectangle {
         id: tbRow
         anchors.centerIn: parent
         spacing: 6
-        Text {
+        MonoText {
+            theme: tb.theme
+            size: 0.917
             visible: tb.key !== ""
-            textFormat: Text.PlainText
             text: tb.key
             color: tb.theme.focus
-            font.family: tb.theme.family
-            font.pixelSize: tb.theme.px(0.917)
             font.bold: true
         }
-        Text {
-            textFormat: Text.PlainText
+        MonoText {
+            theme: tb.theme
+            size: 0.917
             text: tb.label
-            color: tb.theme.fg
-            font.family: tb.theme.family
-            font.pixelSize: tb.theme.px(0.917)
         }
     }
     MouseArea {

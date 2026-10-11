@@ -571,20 +571,15 @@ Item {
                             font.family: root.theme.iconFamily
                             font.pixelSize: root.theme.px(1.333)
                         }
-                        Text {
-                            textFormat: Text.PlainText
+                        MonoText {
+                            theme: root.theme
                             text: "omaconvert"
-                            color: root.theme.fg
-                            font.family: root.theme.family
-                            font.pixelSize: root.theme.px(1)
                             font.bold: true
                         }
-                        Text {
-                            textFormat: Text.PlainText
+                        MonoText {
+                            theme: root.theme
                             text: "v" + root.appVersion
                             color: root.theme.faint
-                            font.family: root.theme.family
-                            font.pixelSize: root.theme.px(1)
                             Accessible.name: "OmaConvert version " + root.appVersion
                         }
                         Item { Layout.fillWidth: true }
@@ -599,14 +594,13 @@ Item {
                             color: root.theme.alpha(tone, 0.13)
                             border.width: 1
                             border.color: tone
-                            Text {
+                            MonoText {
                                 id: stateText
+                                theme: root.theme
+                                size: 0.833
                                 anchors.centerIn: parent
-                                textFormat: Text.PlainText
                                 text: parent.label
                                 color: parent.tone
-                                font.family: root.theme.family
-                                font.pixelSize: root.theme.px(0.833)
                                 font.bold: true
                                 font.letterSpacing: 1.5
                             }
@@ -673,35 +667,32 @@ Item {
                                     Layout.fillWidth: true
                                     spacing: 4
                                     SectionLabel { theme: root.theme; text: "SOURCE" }
-                                    Text {
-                                        textFormat: Text.PlainText
+                                    MonoText {
+                                        theme: root.theme
+                                        size: 1.5
                                         Layout.fillWidth: true
                                         text: choose.dragging ? "Drop to open" : Model.name(service.inputPath)
                                         color: choose.activeFocus ? root.theme.focus : root.theme.fg
-                                        font.family: root.theme.family
-                                        font.pixelSize: root.theme.px(1.5)
                                         font.bold: true
                                         elide: Text.ElideMiddle
                                     }
-                                    Text {
-                                        textFormat: Text.PlainText
+                                    MonoText {
+                                        theme: root.theme
+                                        size: 0.917
                                         Layout.fillWidth: true
                                         text: service.metadata !== null ? Model.mediaDescription(service.metadata)
                                             : (service.busy ? "Reading media…" : "Not read  ·  choose another file")
                                         color: root.theme.dim
-                                        font.family: root.theme.family
-                                        font.pixelSize: root.theme.px(0.917)
                                         elide: Text.ElideRight
                                     }
                                 }
-                                Text {
+                                MonoText {
+                                    theme: root.theme
+                                    size: 0.917
                                     Layout.alignment: Qt.AlignBottom
                                     visible: !root.pickerBusy
-                                    textFormat: Text.PlainText
                                     text: "change"
                                     color: choose.hot ? root.theme.fg : root.theme.faint
-                                    font.family: root.theme.family
-                                    font.pixelSize: root.theme.px(0.917)
                                 }
                             }
                             // Empty: one big drop target.
@@ -728,22 +719,19 @@ Item {
                                             font.family: root.theme.iconFamily
                                             font.pixelSize: root.theme.px(2.333)
                                         }
-                                        Text {
+                                        MonoText {
+                                            theme: root.theme
+                                            size: 1.167
                                             Layout.alignment: Qt.AlignHCenter
-                                            textFormat: Text.PlainText
                                             text: root.pickerBusy ? "Choosing file…" : (choose.dragging ? "Drop to open" : "Choose a video or image")
-                                            color: root.theme.fg
-                                            font.family: root.theme.family
-                                            font.pixelSize: root.theme.px(1.167)
                                             font.bold: true
                                         }
-                                        Text {
+                                        MonoText {
+                                            theme: root.theme
+                                            size: 0.917
                                             Layout.alignment: Qt.AlignHCenter
-                                            textFormat: Text.PlainText
                                             text: "⏎ browse  ·  drop a file  ·  ctrl+v paste"
                                             color: root.theme.faint
-                                            font.family: root.theme.family
-                                            font.pixelSize: root.theme.px(0.917)
                                         }
                                     }
                                 }
@@ -774,13 +762,12 @@ Item {
                             RowLayout {
                                 Layout.fillWidth: true
                                 SectionLabel { theme: root.theme; text: "BATCH"; Layout.fillWidth: true }
-                                Text {
+                                MonoText {
+                                    theme: root.theme
+                                    size: 0.917
                                     visible: !service.busy && !service.result
-                                    textFormat: Text.PlainText
                                     text: "change"
                                     color: batchChange.containsMouse ? root.theme.fg : root.theme.faint
-                                    font.family: root.theme.family
-                                    font.pixelSize: root.theme.px(0.917)
                                     MouseArea {
                                         id: batchChange
                                         anchors.fill: parent
@@ -790,25 +777,22 @@ Item {
                                     }
                                 }
                             }
-                            Text {
-                                textFormat: Text.PlainText
+                            MonoText {
+                                theme: root.theme
+                                size: 1.5
                                 Layout.fillWidth: true
                                 text: root.batchReady.length ? root.batchTitle()
                                     : (service.busy ? "Reading " + service.batch.length + " files…" : "None of these files can be read")
-                                color: root.theme.fg
-                                font.family: root.theme.family
-                                font.pixelSize: root.theme.px(1.5)
                                 font.bold: true
                             }
-                            Text {
-                                textFormat: Text.PlainText
+                            MonoText {
+                                theme: root.theme
+                                size: 0.917
                                 Layout.fillWidth: true
                                 // Always one line tall, so recipes do not move.
                                 text: (root.idleWithFile ? "each file  →  " + (root.activeLimit > 0 ? "≤ " + Model.sizeLabel(root.activeLimit) : "quality preset") : "")
                                     + (root.batchNote() ? (root.idleWithFile ? "  ·  " : "") + root.batchNote() : "") || " "
                                 color: root.theme.dim
-                                font.family: root.theme.family
-                                font.pixelSize: root.theme.px(0.917)
                                 elide: Text.ElideRight
                             }
                             Rectangle {
@@ -853,28 +837,26 @@ Item {
                                                     anchors.leftMargin: 12
                                                     anchors.rightMargin: 12
                                                     spacing: 10
-                                                    Text {
+                                                    MonoText {
+                                                        theme: root.theme
                                                         Layout.preferredWidth: root.theme.px(1)
-                                                        textFormat: Text.PlainText
                                                         text: ({ reading: "…", queued: "·", working: "▸", done: "✓", failed: "✗", skipped: "–", stopped: "■" })[batchRow.phaseName] || "·"
                                                         color: batchRow.phaseName === "done" ? root.theme.mist : (batchRow.phaseName === "failed" ? root.theme.urgent
                                                              : (batchRow.phaseName === "working" ? root.theme.focus : root.theme.faint))
-                                                        font.family: root.theme.family
-                                                        font.pixelSize: root.theme.px(1)
                                                         font.bold: true
                                                     }
-                                                    Text {
+                                                    MonoText {
+                                                        theme: root.theme
+                                                        size: 0.917
                                                         Layout.fillWidth: true
-                                                        textFormat: Text.PlainText
                                                         text: Model.name(batchRow.path)
                                                         color: batchRow.phaseName === "skipped" || batchRow.phaseName === "failed" && !batchRow.ok ? root.theme.faint : root.theme.fg
-                                                        font.family: root.theme.family
-                                                        font.pixelSize: root.theme.px(0.917)
                                                         elide: Text.ElideMiddle
                                                     }
-                                                    Text {
+                                                    MonoText {
+                                                        theme: root.theme
+                                                        size: 0.833
                                                         Layout.maximumWidth: batchRows.width * 0.48
-                                                        textFormat: Text.PlainText
                                                         text: batchRow.phaseName === "working" ? Math.round(service.progress * 100) + "%"
                                                             : batchRow.phaseName === "done" ? Model.compactSize(batchRow.bytes) + "  →  " + Model.compactSize(batchRow.outputBytes)
                                                             : batchRow.phaseName === "failed" || batchRow.phaseName === "skipped" ? (batchRow.message || batchRow.phaseName)
@@ -882,8 +864,6 @@ Item {
                                                             : batchRow.phaseName === "reading" ? "reading…"
                                                             : Model.compactSize(batchRow.bytes)
                                                         color: batchRow.phaseName === "failed" ? root.theme.urgent : (batchRow.phaseName === "done" ? root.theme.mist : root.theme.dim)
-                                                        font.family: root.theme.family
-                                                        font.pixelSize: root.theme.px(0.833)
                                                         elide: Text.ElideRight
                                                     }
                                                 }
@@ -1056,13 +1036,12 @@ Item {
                             Flow {
                                 Layout.fillWidth: true
                                 spacing: 6
-                                Text {
-                                    textFormat: Text.PlainText
+                                MonoText {
+                                    theme: root.theme
+                                    size: 0.833
                                     text: root.matched.chips.length > 0 ? "understood"
                                         : (root.inputKind === "image" ? "type a format and size  ·  jpg 200kb  ·  webp" : "type a format and size  ·  gif 10mb  ·  mp4 quick")
                                     color: root.theme.faint
-                                    font.family: root.theme.family
-                                    font.pixelSize: root.theme.px(0.833)
                                     height: 20
                                     verticalAlignment: Text.AlignVCenter
                                 }
@@ -1076,14 +1055,13 @@ Item {
                                         color: chip.modelData.ok ? root.theme.alpha(root.theme.sage, 0.18) : "transparent"
                                         border.width: 1
                                         border.color: chip.modelData.ok ? root.theme.alpha(root.theme.sage, 0.56) : root.theme.line
-                                        Text {
+                                        MonoText {
                                             id: chipText
+                                            theme: root.theme
+                                            size: 0.833
                                             anchors.centerIn: parent
-                                            textFormat: Text.PlainText
                                             text: chip.modelData.text
                                             color: chip.modelData.ok ? root.theme.mist : root.theme.faint
-                                            font.family: root.theme.family
-                                            font.pixelSize: root.theme.px(0.833)
                                             font.strikeout: !chip.modelData.ok
                                         }
                                     }
@@ -1121,63 +1099,56 @@ Item {
                                             anchors.leftMargin: 14
                                             anchors.rightMargin: 14
                                             spacing: 14
-                                            Text {
-                                                textFormat: Text.PlainText
+                                            MonoText {
+                                                theme: root.theme
+                                                size: 0.917
                                                 text: recipeRow.index < 9 ? String(recipeRow.index + 1) : ""
                                                 color: recipeRow.current ? root.theme.focus : root.theme.faint
-                                                font.family: root.theme.family
-                                                font.pixelSize: root.theme.px(0.917)
                                                 font.bold: true
                                             }
-                                            Text {
-                                                textFormat: Text.PlainText
+                                            MonoText {
+                                                theme: root.theme
+                                                size: 0.833
                                                 Layout.preferredWidth: root.theme.px(3.5)
                                                 text: (recipeRow.modelData.fields.format === Model.SEQUENCE ? "SEQ" : recipeRow.modelData.fields.format).toUpperCase()
                                                 color: root.theme.mist
-                                                font.family: root.theme.family
-                                                font.pixelSize: root.theme.px(0.833)
                                                 font.bold: true
                                                 font.letterSpacing: 1
                                             }
                                             ColumnLayout {
                                                 Layout.fillWidth: true
                                                 spacing: 2
-                                                Text {
-                                                    textFormat: Text.PlainText
+                                                MonoText {
+                                                    theme: root.theme
+                                                    size: 1.083
                                                     Layout.fillWidth: true
                                                     text: recipeRow.modelData.title
-                                                    color: root.theme.fg
                                                     opacity: recipeRow.blocked ? 0.5 : 1
-                                                    font.family: root.theme.family
-                                                    font.pixelSize: root.theme.px(1.083)
                                                     font.bold: true
                                                     elide: Text.ElideRight
                                                 }
-                                                Text {
-                                                    textFormat: Text.PlainText
+                                                MonoText {
+                                                    theme: root.theme
+                                                    size: 0.833
                                                     Layout.fillWidth: true
                                                     text: recipeRow.modelData.problem || recipeRow.note || recipeRow.detail
                                                     color: recipeRow.blocked ? root.theme.urgent : (recipeRow.note ? root.theme.fg : root.theme.dim)
-                                                    font.family: root.theme.family
-                                                    font.pixelSize: root.theme.px(0.833)
                                                     wrapMode: Text.WordWrap
                                                 }
                                             }
-                                            Text {
-                                                textFormat: Text.PlainText
+                                            MonoText {
+                                                theme: root.theme
+                                                size: 0.833
                                                 text: recipeRow.modelData.pinned ? "★ pinned" : (recipeRow.modelData.last ? "last used" : (recipeRow.modelData.custom ? "as typed" : ""))
                                                 visible: text !== ""
                                                 color: recipeRow.current ? root.theme.fg : root.theme.faint
-                                                font.family: root.theme.family
-                                                font.pixelSize: root.theme.px(0.833)
                                             }
-                                            Text {
-                                                textFormat: Text.PlainText
+                                            MonoText {
+                                                theme: root.theme
+                                                size: 1.083
                                                 text: "⏎"
                                                 visible: recipeRow.current && !recipeRow.blocked
                                                 color: root.theme.focus
-                                                font.family: root.theme.family
-                                                font.pixelSize: root.theme.px(1.083)
                                                 font.bold: true
                                             }
                                         }
@@ -1293,12 +1264,11 @@ Item {
                                         Flow {
                                             Layout.fillWidth: true
                                             spacing: 6
-                                            Text {
-                                                textFormat: Text.PlainText
+                                            MonoText {
+                                                theme: root.theme
+                                                size: 0.833
                                                 text: "presets"
                                                 color: root.theme.faint
-                                                font.family: root.theme.family
-                                                font.pixelSize: root.theme.px(0.833)
                                                 height: 18
                                                 verticalAlignment: Text.AlignVCenter
                                             }
@@ -1313,14 +1283,13 @@ Item {
                                                     color: presetMouse.containsMouse ? root.theme.surface : "transparent"
                                                     border.width: 1
                                                     border.color: presetChip.on ? root.theme.focus : root.theme.alpha(root.theme.fg, 0.15)
-                                                    Text {
+                                                    MonoText {
                                                         id: presetText
+                                                        theme: root.theme
+                                                        size: 0.833
                                                         anchors.centerIn: parent
-                                                        textFormat: Text.PlainText
                                                         text: presetChip.modelData.label
                                                         color: presetChip.on ? root.theme.focus : root.theme.dim
-                                                        font.family: root.theme.family
-                                                        font.pixelSize: root.theme.px(0.833)
                                                     }
                                                     MouseArea {
                                                         id: presetMouse
@@ -1401,14 +1370,12 @@ Item {
                                                 font.family: root.theme.iconFamily
                                                 font.pixelSize: root.theme.px(1.083)
                                             }
-                                            Text {
-                                                textFormat: Text.PlainText
+                                            MonoText {
+                                                theme: root.theme
                                                 Layout.fillWidth: true
                                                 text: root.outputFolder ? Model.folderLabel(root.outputFolder, root.homeDir)
                                                     : (service.inputPath ? "next to source  ·  " + Model.folderLabel(Model.dirname(service.inputPath), root.homeDir) : "next to source")
                                                 color: root.outputFolder ? root.theme.fg : root.theme.dim
-                                                font.family: root.theme.family
-                                                font.pixelSize: root.theme.px(1)
                                                 font.bold: root.outputFolder !== ""
                                                 elide: Text.ElideLeft
                                                 Accessible.name: "Output folder: " + text
@@ -1441,12 +1408,11 @@ Item {
                                                 border.width: 1
                                                 border.color: parent.activeFocus ? root.theme.focus : (prefs.rememberFolder ? root.theme.sage : root.theme.alpha(root.theme.fg, 0.4))
                                             }
-                                            Text {
-                                                textFormat: Text.PlainText
+                                            MonoText {
+                                                theme: root.theme
+                                                size: 0.833
                                                 text: "remember this folder"
                                                 color: root.theme.dim
-                                                font.family: root.theme.family
-                                                font.pixelSize: root.theme.px(0.833)
                                                 MouseArea {
                                                     anchors.fill: parent
                                                     anchors.leftMargin: -19
@@ -1473,23 +1439,19 @@ Item {
                                                 Layout.fillWidth: true
                                                 spacing: 3
                                                 SectionLabel { theme: root.theme; text: "WILL MAKE"; font.pixelSize: root.theme.px(0.75) }
-                                                Text {
-                                                    textFormat: Text.PlainText
+                                                MonoText {
+                                                    theme: root.theme
                                                     Layout.fillWidth: true
                                                     text: Model.outputName(service.inputPath, root.currentFields())
-                                                    color: root.theme.fg
-                                                    font.family: root.theme.family
-                                                    font.pixelSize: root.theme.px(1)
                                                     font.bold: true
                                                     elide: Text.ElideMiddle
                                                 }
-                                                Text {
-                                                    textFormat: Text.PlainText
+                                                MonoText {
+                                                    theme: root.theme
+                                                    size: 0.833
                                                     Layout.fillWidth: true
                                                     text: root.fieldsRecipe.problem || root.fieldsRecipe.note || root.fieldsRecipe.detail
                                                     color: root.fieldsRecipe.problem ? root.theme.urgent : root.theme.dim
-                                                    font.family: root.theme.family
-                                                    font.pixelSize: root.theme.px(0.833)
                                                     wrapMode: Text.WordWrap
                                                 }
                                             }
@@ -1519,13 +1481,11 @@ Item {
                                                     spacing: 8
                                                     Repeater {
                                                         model: ["⏎", "convert"]
-                                                        delegate: Text {
+                                                        delegate: MonoText {
+                                                            theme: root.theme
                                                             required property string modelData
-                                                            textFormat: Text.PlainText
                                                             text: modelData
                                                             color: root.canConvert ? root.theme.bg : root.theme.faint
-                                                            font.family: root.theme.family
-                                                            font.pixelSize: root.theme.px(1)
                                                             font.bold: true
                                                         }
                                                     }
@@ -1562,24 +1522,21 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 4
-                                Text {
-                                    textFormat: Text.PlainText
+                                MonoText {
+                                    theme: root.theme
+                                    size: 0.917
                                     Layout.fillWidth: true
                                     text: (service.isBatch ? root.batchReady.length + " files" : Model.name(service.inputPath)) + "  →  " + root.jobCommand
                                     color: root.theme.dim
-                                    font.family: root.theme.family
-                                    font.pixelSize: root.theme.px(0.917)
                                     elide: Text.ElideMiddle
                                 }
-                                Text {
-                                    textFormat: Text.PlainText
+                                MonoText {
+                                    theme: root.theme
+                                    size: 1.5
                                     Layout.fillWidth: true
                                     text: service.cancelling ? "Cancelling…"
                                         : service.isBatch ? "File " + Math.min(root.batchReady.length, root.batchFinished + 1) + " of " + root.batchReady.length
                                         : (service.phase.indexOf("Finding") === 0 ? "Finding the best quality that fits" : service.phase)
-                                    color: root.theme.fg
-                                    font.family: root.theme.family
-                                    font.pixelSize: root.theme.px(1.5)
                                     font.bold: true
                                     wrapMode: Text.WordWrap
                                 }
@@ -1589,14 +1546,13 @@ Item {
                                 spacing: 6
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    Text {
-                                        textFormat: Text.PlainText
+                                    MonoText {
+                                        theme: root.theme
+                                        size: 0.917
                                         Layout.fillWidth: true
                                         text: service.isBatch ? (service.batchCurrent >= 0 ? Model.name(service.batch[service.batchCurrent].path) : "")
                                             : service.currentPass ? "pass " + service.currentPass : (service.phase.indexOf("Finding") === 0 ? "analysing samples" : "")
                                         color: root.theme.mist
-                                        font.family: root.theme.family
-                                        font.pixelSize: root.theme.px(0.917)
                                         font.bold: true
                                     }
                                     Text {
@@ -1659,23 +1615,20 @@ Item {
                                         spacing: 4
                                         RowLayout {
                                             Layout.fillWidth: true
-                                            Text {
-                                                textFormat: Text.PlainText
+                                            MonoText {
+                                                theme: root.theme
+                                                size: 0.917
                                                 Layout.fillWidth: true
                                                 text: cand.modelData.width + "×" + cand.modelData.height
                                                       + (cand.modelData.fps ? "  ·  " + Number(cand.modelData.fps).toFixed(1).replace(".0", "") + " fps" : "")
                                                       + (cand.modelData.colors ? "  ·  " + cand.modelData.colors + " col" : "")
-                                                color: root.theme.fg
-                                                font.family: root.theme.family
-                                                font.pixelSize: root.theme.px(0.917)
                                                 elide: Text.ElideRight
                                             }
-                                            Text {
-                                                textFormat: Text.PlainText
+                                            MonoText {
+                                                theme: root.theme
+                                                size: 0.917
                                                 text: "≈ " + Model.compactSize(cand.bytes)
                                                 color: cand.fits ? root.theme.mist : root.theme.urgent
-                                                font.family: root.theme.family
-                                                font.pixelSize: root.theme.px(0.917)
                                                 font.bold: true
                                             }
                                         }
@@ -1703,13 +1656,12 @@ Item {
                             RowLayout {
                                 Layout.fillWidth: true
                                 Layout.topMargin: 6
-                                Text {
-                                    textFormat: Text.PlainText
+                                MonoText {
+                                    theme: root.theme
+                                    size: 0.917
                                     Layout.fillWidth: true
                                     text: Model.duration(Math.max(0, (root.clock - service.startedAt) / 1000)) + " elapsed"
                                     color: root.theme.faint
-                                    font.family: root.theme.family
-                                    font.pixelSize: root.theme.px(0.917)
                                 }
                                 TextButton {
                                     theme: root.theme
@@ -1751,12 +1703,10 @@ Item {
                             spacing: 4
                             RowLayout {
                                 spacing: 10
-                                Text {
-                                    textFormat: Text.PlainText
+                                MonoText {
+                                    theme: root.theme
+                                    size: 3.6
                                     text: service.result ? Model.compactSize(service.result.bytes_after) : ""
-                                    color: root.theme.fg
-                                    font.family: root.theme.family
-                                    font.pixelSize: root.theme.px(3.6)
                                     font.bold: true
                                 }
                                 Rectangle {
@@ -1767,26 +1717,24 @@ Item {
                                     color: root.theme.alpha(root.theme.sage, 0.22)
                                     border.width: 1
                                     border.color: root.theme.sage
-                                    Text {
+                                    MonoText {
                                         id: batchBadge
+                                        theme: root.theme
+                                        size: 0.917
                                         anchors.centerIn: parent
-                                        textFormat: Text.PlainText
                                         text: service.result ? "✓ " + service.result.done + " of " + service.result.total + " done" : ""
                                         color: root.theme.mist
-                                        font.family: root.theme.family
-                                        font.pixelSize: root.theme.px(0.917)
                                         font.bold: true
                                     }
                                 }
                             }
-                            Text {
-                                textFormat: Text.PlainText
+                            MonoText {
+                                theme: root.theme
+                                size: 0.917
                                 Layout.fillWidth: true
                                 text: service.result ? Model.savingsText(service.result.bytes_before, service.result.bytes_after)
                                     + (service.result.failed ? "  ·  " + service.result.failed + " failed" : "") : ""
                                 color: service.result && service.result.failed ? root.theme.urgent : root.theme.faint
-                                font.family: root.theme.family
-                                font.pixelSize: root.theme.px(0.917)
                                 wrapMode: Text.WordWrap
                             }
                         }
@@ -1824,14 +1772,12 @@ Item {
                         }
                         Hint { theme: root.theme; text: "󰄬  " + root.clipboardStatus; visible: root.clipboardStatus !== ""; color: root.theme.fg }
                         Hint { theme: root.theme; text: root.pasteNote; visible: root.pasteNote !== "" && !service.busy; color: root.theme.fg }
-                        Text {
-                            textFormat: Text.PlainText
+                        MonoText {
+                            theme: root.theme
                             Layout.fillWidth: true
                             text: "󰅚  " + service.error
                             visible: service.error !== ""
                             color: root.theme.urgent
-                            font.family: root.theme.family
-                            font.pixelSize: root.theme.body
                             font.bold: true
                             wrapMode: Text.WordWrap
                         }
@@ -1897,30 +1843,27 @@ Item {
                                 id: keyHint
                                 required property var modelData
                                 spacing: 5
-                                Text {
-                                    textFormat: Text.PlainText
+                                MonoText {
+                                    theme: root.theme
+                                    size: 0.833
                                     text: keyHint.modelData[0]
                                     color: root.theme.focus
-                                    font.family: root.theme.family
-                                    font.pixelSize: root.theme.px(0.833)
                                     font.bold: true
                                 }
-                                Text {
-                                    textFormat: Text.PlainText
+                                MonoText {
+                                    theme: root.theme
+                                    size: 0.833
                                     text: keyHint.modelData[1]
                                     color: root.theme.dim
-                                    font.family: root.theme.family
-                                    font.pixelSize: root.theme.px(0.833)
                                 }
                             }
                         }
                         Item { Layout.fillWidth: true }
-                        Text {
-                            textFormat: Text.PlainText
+                        MonoText {
+                            theme: root.theme
+                            size: 0.833
                             text: root.screen === "settings" ? "esc back to recipes" : (root.screen === "converting" ? "esc cancel" : "esc close")
                             color: root.theme.faint
-                            font.family: root.theme.family
-                            font.pixelSize: root.theme.px(0.833)
                         }
                     }
                 }
