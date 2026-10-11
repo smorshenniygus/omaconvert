@@ -22,22 +22,25 @@ Item {
     readonly property var menuTheme: Commons.Color.menu
     readonly property var fonts: Style.font
     readonly property var spacing: Style.spacing
-    property url settingsLocation: Model.fileUri(root.configRoot + "/omaconvert/preferences.ini")
     property string clipboardText: ""
     property string clipboardStatus: ""
-    readonly property string configRoot: Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")
     readonly property bool pickerBusy: filePicker.running || folderPicker.running
     readonly property string homeDir: Quickshell.env("HOME") || ""
-    // Destination folder for the next conversion; "" saves next to the source.
-    // Only persisted (prefs.savedFolder) when the user asked to remember it.
-    property string outputFolder: ""
     readonly property var convertService: service
+    // What the window is doing: the request, the screen, starting a job.
+    readonly property Session session: Session {
+        service: root.convertService
+        pickerBusy: root.pickerBusy
+        trimStart: trimBar.startTime
+        trimEnd: trimBar.endTime
+        trimValid: trimBar.valid
+        onConversionStarted: root.clipboardStatus = ""
+    }
     readonly property var previewService: preview
     readonly property var panelWindow: window
     readonly property var panelCard: card
     readonly property var trimControl: trimBar
     readonly property var commandField: commandInput
-    readonly property string inputKind: service.metadata && service.metadata.kind === "image" ? "image" : "video"
     // Readable line length at any window size: narrow windows use every
     // pixel, wide/fullscreen ones get a centered column instead of a
     // stretched single row.
@@ -62,56 +65,7 @@ Item {
         bodySmall: root.fonts.bodySmall
         caption: root.fonts.caption
     }
-    // Form state (persisted through Settings aliases below).
-    property string formatValue: ""
-    property int modeIndex: 0
-    property int unitIndex: 0
-    property int preferenceIndex: 1
-    property int presetIndex: 1
-    property int sequenceFps: 0
-    // Recipe list vs. every field ("+"); which recipe Enter runs.
-    property bool advanced: false
-    property int selectedRow: 0
-    readonly property var formatOptions: Model.commandFormats(root.inputKind, service.capabilities)
-    readonly property string unavailableFormats: Model.unavailableText(root.inputKind, service.capabilities)
-    readonly property string unitText: ["MB", "KB"][root.unitIndex] || "MB"
-    onFormatOptionsChanged: if (root.formatOptions.indexOf(root.formatValue) < 0) Qt.callLater(root.resetRecipes)
-    Component.onCompleted: {
-        if (prefs.rememberFolder) root.outputFolder = prefs.savedFolder
-    }
-    readonly property bool trimShown: !service.isBatch && service.metadata !== null && service.metadata.kind !== "image" && (service.metadata.duration || 0) > 0
-    readonly property bool sizeShown: root.modeIndex === 0 && root.formatValue !== Model.SEQUENCE
-    // Seconds that will be converted: the trimmed part of a video.
-    readonly property real convertSeconds: root.trimShown ? Math.max(0, trimBar.endTime - trimBar.startTime) : ((service.metadata && service.metadata.duration) || 0)
-    readonly property string lastCommand: root.inputKind === "image" ? prefs.lastImageCommand : prefs.lastVideoCommand
-    // Without the trimmed length: dragging a trim handle must not rebuild
-    // every recipe row. Rows work out their length-dependent texts.
-    readonly property var matched: service.metadata
-        ? Model.matchRecipes(commandInput.text, root.inputKind, service.metadata, service.capabilities, root.lastCommand, 0, root.pinned)
-        : ({ rows: [], chips: [], note: "" })
-    readonly property var fieldsRecipe: Model.recipe(root.currentFields(), root.inputKind, service.metadata, service.capabilities, root.convertSeconds)
-    readonly property bool readyToConvert: !service.busy && !root.pickerBusy && service.metadata !== null && service.dependenciesReady && (!root.trimShown || trimBar.valid)
-    // The same checks as a recipe row (sound, size, a known duration for a
-    // size target), so the panel never starts what the list would block.
-    readonly property bool canConvert: root.readyToConvert && root.fieldsRecipe.problem === "" && root.formatOptions.indexOf(root.formatValue) >= 0
-    // Format that Enter would run: the fields with "+" open, else the highlighted recipe.
-    readonly property string activeFormat: root.advanced ? root.formatValue
-        : (root.selectedRow < root.matched.rows.length ? root.matched.rows[root.selectedRow].fields.format : "")
-    // What Enter would make: the fields with settings open, else the highlighted recipe.
-    readonly property var activeFields: root.advanced ? root.currentFields()
-        : (root.selectedRow < root.matched.rows.length ? root.matched.rows[root.selectedRow].fields : null)
-    readonly property real activeLimit: root.activeFields && root.activeFields.mode === "target" && root.activeFields.format !== Model.SEQUENCE
-        ? Model.limitBytes(root.activeFields.size, root.activeFields.unit) : 0
-    // The running job, for the converting screen.
-    property real jobLimitBytes: 0
-    property string jobCommand: ""
     property real clock: Date.now()
-    readonly property bool idleWithFile: service.metadata !== null && !service.result && !service.busy
-    readonly property string screen: service.result && !service.busy ? "result"
-        : (service.busy && (service.operation === "convert" || service.operation === "batch") ? "converting"
-        : (root.idleWithFile ? (root.advanced ? "settings" : "recipes") : "empty"))
-    readonly property bool canRunSelected: root.readyToConvert && root.selectedRow < root.matched.rows.length && root.matched.rows[root.selectedRow].problem === ""
-
     function open(payloadJson) {
         closingFromHost = false
         opened = true
@@ -129,92 +83,23 @@ Item {
         }
         // Closing deleted the cached thumbnails; rebuild them for a file still open.
         if (service.metadata && service.inputPath && !payload.file && !(payload.files && payload.files.length)) {
-            preview.requestSource(service.inputPath, root.trimShown ? trimBar.playhead : 0, false, service.metadata)
+            preview.requestSource(service.inputPath, root.session.trimShown ? trimBar.playhead : 0, false, service.metadata)
             if (service.result && service.result.path) preview.requestResult(service.result.first_frame || service.result.path)
         }
         service.loadStatus()
         Qt.callLater(() => choose.forceActiveFocus())
     }
-    // Fields <-> the command line. A recipe, the typed text and the "+"
-    // panel all end up as these root properties; startConversion() reads them.
-    function currentFields() {
-        return {
-            format: root.formatValue,
-            mode: root.modeIndex === 1 || root.formatValue === Model.SEQUENCE ? "quick" : "target",
-            size: sizeInput.text, unit: root.unitText,
-            preference: Model.PREFERENCES[root.preferenceIndex] || "balanced",
-            preset: Model.PRESETS[root.presetIndex] || "balanced",
-            sequenceFps: root.sequenceFps
-        }
-    }
-    function applyFields(fields) {
-        if (!fields) return
-        if (fields.format) root.formatValue = fields.format
-        if (fields.mode) root.modeIndex = fields.mode === "quick" ? 1 : 0
-        if (fields.size) sizeInput.text = fields.size
-        if (fields.unit) root.unitIndex = fields.unit === "KB" ? 1 : 0
-        if (fields.preference) root.preferenceIndex = Math.max(0, Model.PREFERENCES.indexOf(fields.preference))
-        if (fields.preset) root.presetIndex = Math.max(0, Model.PRESETS.indexOf(fields.preset))
-        if (fields.sequenceFps !== undefined) root.sequenceFps = Number(fields.sequenceFps) || 0
-    }
-    // A panel edit rewrites the line (setting text does not emit textEdited).
-    function syncCommand() {
-        if (root.advanced) commandInput.text = Model.commandText(root.currentFields(), root.inputKind)
-    }
-    // Typing filters the recipes; with the panel open it also fills the fields.
-    function commandEdited() {
-        root.selectedRow = 0
-        if (root.advanced) root.applyFields(Model.parseCommand(commandInput.text, root.inputKind, root.formatOptions).fields)
-    }
-    function moveSelection(step) {
-        if (!root.advanced) root.selectedRow = Math.max(0, Math.min(root.matched.rows.length - 1, root.selectedRow + step))
-    }
     function commandReturn(event) {
         // Ctrl+Enter belongs to the window shortcut.
         if (event.modifiers & Qt.ControlModifier) { event.accepted = false; return }
         event.accepted = true
-        if (root.advanced) root.startConversion()
-        else root.runRecipe(root.selectedRow)
-    }
-    function runRecipe(index) {
-        var row = root.matched.rows[index]
-        if (!row || row.problem !== "" || !root.readyToConvert) return
-        root.applyFields(row.fields)
-        root.startConversion()
-    }
-    function toggleAdvanced() {
-        if (root.advanced) {
-            root.advanced = false
-            root.selectedRow = 0
-            return
-        }
-        var row = root.matched.rows[root.selectedRow] || root.matched.rows[0]
-        if (row) root.applyFields(row.fields)
-        root.advanced = true
-        root.syncCommand()
-    }
-    // A newly read file starts from its recipes, the last used one first.
-    function resetRecipes() {
-        root.advanced = false
-        root.selectedRow = 0
-        commandInput.text = ""
-        var first = Model.recipes(root.inputKind, service.metadata, service.capabilities, root.lastCommand, root.convertSeconds, root.pinned)[0]
-        if (first) root.applyFields(first.fields)
-        else if (root.formatOptions.indexOf(root.formatValue) < 0) root.formatValue = root.formatOptions[0] || ""
+        root.session.runActive()
     }
     function chooseVideo() {
         if (!service.busy && !filePicker.running) filePicker.running = true
     }
     function chooseFolder() {
         if (!service.busy && !root.pickerBusy) folderPicker.running = true
-    }
-    function setOutputFolder(path) {
-        root.outputFolder = path || ""
-        if (prefs.rememberFolder) prefs.savedFolder = root.outputFolder
-    }
-    function toggleRememberFolder() {
-        prefs.rememberFolder = !prefs.rememberFolder
-        prefs.savedFolder = prefs.rememberFolder ? root.outputFolder : ""
     }
     function pathFromUri(uri) {
         var value = String(uri || "").trim().split("\n")[0].trim()
@@ -238,64 +123,6 @@ Item {
         else close()
     }
     function toggle() { if (opened) dismiss(); else open("{}") }
-    function startConversion() {
-        if (!canConvert) return
-        var command = Model.commandText(root.currentFields(), root.inputKind)
-        root.jobCommand = command
-        root.jobLimitBytes = root.sizeShown ? Model.limitBytes(sizeInput.text, root.unitText) : 0
-        if (root.inputKind === "image") prefs.lastImageCommand = command
-        else prefs.lastVideoCommand = command
-        prefs.sync()
-        clipboardStatus = ""
-        var useTrim = root.trimShown
-        var sequence = root.formatValue === Model.SEQUENCE
-        if (service.isBatch) {
-            service.convertBatch(sequence ? "png" : root.formatValue.toLowerCase(), root.sizeShown ? "target" : "quick",
-                                 sizeInput.text, root.unitText, Model.PRESETS[root.presetIndex] || "balanced",
-                                 Model.PREFERENCES[root.preferenceIndex] || "balanced", root.outputFolder,
-                                 sequence ? root.sequenceFps : null)
-            return
-        }
-        service.convert(sequence ? "png" : root.formatValue.toLowerCase(), root.sizeShown ? "target" : "quick",
-                        sizeInput.text, root.unitText, Model.PRESETS[root.presetIndex] || "balanced",
-                        Model.PREFERENCES[root.preferenceIndex] || "balanced",
-                        useTrim ? trimBar.startTime : 0, useTrim ? trimBar.endTime : 0, root.outputFolder,
-                        sequence ? root.sequenceFps : null)
-    }
-    // ── Pinned recipes: per kind, shown first ───────────────────────────
-    readonly property var pinned: Model.parsePinned(root.inputKind === "image" ? prefs.pinnedImage : prefs.pinnedVideo)
-    // The recipe Enter would run right now, as command words.
-    readonly property string activeCommand: root.advanced ? Model.commandText(root.currentFields(), root.inputKind)
-        : (root.selectedRow < root.matched.rows.length ? root.matched.rows[root.selectedRow].command : "")
-    readonly property bool activePinned: root.activeCommand !== "" && root.pinned.indexOf(root.activeCommand) >= 0
-    function togglePin() {
-        if (!root.activeCommand) return
-        var next = JSON.stringify(Model.togglePinned(root.pinned, root.activeCommand))
-        if (root.inputKind === "image") prefs.pinnedImage = next
-        else prefs.pinnedVideo = next
-    }
-    readonly property var batchReady: service.batch.filter(item => item.ok && item.status !== "skipped")
-    readonly property real batchBytes: root.batchReady.reduce((sum, item) => sum + (item.bytes || 0), 0)
-    readonly property int batchFinished: service.batch.filter(item => item.status === "done" || item.status === "failed" && item.ok).length
-    readonly property real batchProgress: root.batchReady.length
-        ? Math.min(1, (root.batchFinished + (service.batchCurrent >= 0 ? service.progress : 0)) / root.batchReady.length) : 0
-    function batchTitle() {
-        var n = root.batchReady.length
-        var word = service.batchKind === "image" ? (n === 1 ? "image" : "images") : (n === 1 ? "video" : "videos")
-        return n + " " + word + "  ·  " + Model.compactSize(root.batchBytes)
-    }
-    function batchNote() {
-        var skipped = service.batch.filter(item => item.status === "skipped").length
-        var unreadable = service.batch.filter(item => item.ok === false).length
-        var parts = []
-        if (skipped) parts.push(skipped + " skipped (other kind)")
-        if (unreadable) parts.push(unreadable + " unreadable")
-        return parts.join("  ·  ")
-    }
-    function batchFolder() {
-        var paths = service.result && service.result.paths ? service.result.paths : []
-        return paths.length ? Model.dirname(paths[0]) : ""
-    }
     // ── Omarchy integration ─────────────────────────────────────────────
     property string pasteNote: ""
     // Ctrl+V: a screenshot or copied image becomes the source (saved under
@@ -316,15 +143,10 @@ Item {
         if (!root.activeRecording) return
         var file = root.activeRecording
         root.activeRecording = ""
-        if (prefs.offerRecordings) Quickshell.execDetached(["python3", service.executable, "--offer-recording", file])
+        if (root.session.prefs.offerRecordings) Quickshell.execDetached(["python3", service.executable, "--offer-recording", file])
     }
     function convertAnother() {
-        service.replaceBatch([])
-        service.batchKind = ""
-        service.result = null
-        service.metadata = null
-        service.inputPath = ""
-        service.phase = ""
+        root.session.clear()
         root.clipboardStatus = ""
         preview.clearAll()
         choose.forceActiveFocus()
@@ -339,25 +161,6 @@ Item {
         clipboard.command = ["wl-copy", "--type", uri ? "text/uri-list" : "text/plain;charset=utf-8"]
         clipboard.running = true
     }
-    Settings {
-        id: prefs
-        location: root.settingsLocation
-        // Last conversion per input kind, as command words ("gif 50mb");
-        // offered first the next time a file of that kind is opened.
-        property string lastVideoCommand: ""
-        property string lastImageCommand: ""
-        // Pinned recipe commands as JSON arrays, e.g. ["jpg 150kb"].
-        property string pinnedVideo: "[]"
-        property string pinnedImage: "[]"
-        property alias modeIndex: root.modeIndex
-        property alias sizeText: sizeInput.text
-        property alias unitIndex: root.unitIndex
-        property alias preferenceIndex: root.preferenceIndex
-        property alias presetIndex: root.presetIndex
-        property bool rememberFolder: false
-        property bool offerRecordings: true
-        property string savedFolder: ""
-    }
     ConvertService {
         id: service
         executable: Model.localPath(Qt.resolvedUrl("bin/omaconvert"))
@@ -368,7 +171,7 @@ Item {
                 // Deferred past binding propagation so TrimBar.duration is current.
                 Qt.callLater(() => {
                     trimBar.reset()
-                    root.resetRecipes()
+                    root.session.resetRecipes()
                     if (root.opened) commandInput.forceActiveFocus()
                 })
             } else if (!service.metadata) {
@@ -388,9 +191,9 @@ Item {
         target: service
         function onPasted(result) {
             if (result.kind === "file") service.selectFiles(result.paths && result.paths.length ? result.paths : [result.path])
-            else if (result.kind === "text" && root.idleWithFile) {
+            else if (result.kind === "text" && root.session.idleWithFile) {
                 commandInput.insert(commandInput.cursorPosition, result.text)
-                root.commandEdited()
+                root.session.editCommand(commandInput.text)
                 commandInput.forceActiveFocus()
             } else root.pasteNote = result.kind === "text"
                 ? "The clipboard holds text, not a file or an image."
@@ -456,7 +259,7 @@ Item {
             waitForEnd: true
             onStreamFinished: {
                 var path = root.pathFromUri(text)
-                if (path) root.setOutputFolder(path)
+                if (path) root.session.setOutputFolder(path)
             }
         }
         // qmllint disable signal-handler-parameters
@@ -496,28 +299,28 @@ Item {
             Rectangle { anchors.fill: parent; color: root.theme.bg }
             Keys.onEscapePressed: event => {
                 if (service.busy) service.cancel()
-                else if (root.screen === "settings") root.toggleAdvanced()
+                else if (root.session.screen === "settings") root.session.toggleAdvanced()
                 else root.dismiss()
                 event.accepted = true
             }
 
             Shortcut {
                 sequences: ["Ctrl+Return", "Ctrl+Enter"]
-                enabled: root.opened && window.visible && !root.pickerBusy && (root.advanced ? root.canConvert : root.canRunSelected)
+                enabled: root.opened && window.visible && !root.pickerBusy && (root.session.advanced ? root.session.canConvert : root.session.canRunSelected)
                 context: Qt.WindowShortcut
-                onActivated: root.advanced ? root.startConversion() : root.runRecipe(root.selectedRow)
+                onActivated: root.session.advanced ? root.session.startConversion() : root.session.runRecipe(root.session.selectedRow)
             }
             Shortcut {
                 sequences: [StandardKey.Paste]
-                enabled: root.opened && window.visible && !service.busy && root.screen !== "settings"
+                enabled: root.opened && window.visible && !service.busy && root.session.screen !== "settings"
                 context: Qt.WindowShortcut
                 onActivated: root.pasteFromClipboard()
             }
             Shortcut {
                 sequence: "Ctrl+,"
-                enabled: root.idleWithFile
+                enabled: root.session.idleWithFile
                 context: Qt.WindowShortcut
-                onActivated: root.toggleAdvanced()
+                onActivated: root.session.toggleAdvanced()
             }
             // Alt+1… runs a recipe: plain digits belong to the command line.
             Repeater {
@@ -527,21 +330,21 @@ Item {
                     required property int index
                     Shortcut {
                         sequence: "Alt+" + (recipeKey.index + 1)
-                        enabled: root.screen === "recipes" && recipeKey.index < root.matched.rows.length
+                        enabled: root.session.screen === "recipes" && recipeKey.index < root.session.matched.rows.length
                         context: Qt.WindowShortcut
-                        onActivated: root.runRecipe(recipeKey.index)
+                        onActivated: root.session.runRecipe(recipeKey.index)
                     }
                 }
             }
-            Shortcut { sequences: ["Return", "Enter"]; enabled: root.screen === "result"; context: Qt.WindowShortcut; onActivated: Qt.openUrlExternally(Model.fileUri(service.isBatch ? root.batchFolder() : service.result.path)) }
-            Shortcut { sequence: "O"; enabled: root.screen === "result"; context: Qt.WindowShortcut; onActivated: root.openResultFolder() }
-            Shortcut { sequence: "C"; enabled: root.screen === "result"; context: Qt.WindowShortcut
+            Shortcut { sequences: ["Return", "Enter"]; enabled: root.session.screen === "result"; context: Qt.WindowShortcut; onActivated: Qt.openUrlExternally(Model.fileUri(service.isBatch ? root.session.batchFolder() : service.result.path)) }
+            Shortcut { sequence: "O"; enabled: root.session.screen === "result"; context: Qt.WindowShortcut; onActivated: root.openResultFolder() }
+            Shortcut { sequence: "C"; enabled: root.session.screen === "result"; context: Qt.WindowShortcut
                        onActivated: service.isBatch ? root.copy(service.result.paths.map(p => Model.fileUri(p)).join("\r\n") + "\r\n", true)
                                                     : root.copy(Model.fileUri(service.result.path) + "\r\n", true) }
-            Shortcut { sequence: "P"; enabled: root.screen === "result"; context: Qt.WindowShortcut
+            Shortcut { sequence: "P"; enabled: root.session.screen === "result"; context: Qt.WindowShortcut
                        onActivated: root.copy(service.isBatch ? service.result.paths.join("\n") : service.result.path, false) }
-            Shortcut { sequence: "Ctrl+D"; enabled: root.screen === "recipes" || root.screen === "settings"; context: Qt.WindowShortcut; onActivated: root.togglePin() }
-            Shortcut { sequence: "N"; enabled: root.screen === "result"; context: Qt.WindowShortcut; onActivated: root.convertAnother() }
+            Shortcut { sequence: "Ctrl+D"; enabled: root.session.screen === "recipes" || root.session.screen === "settings"; context: Qt.WindowShortcut; onActivated: root.session.togglePin() }
+            Shortcut { sequence: "N"; enabled: root.session.screen === "result"; context: Qt.WindowShortcut; onActivated: root.convertAnother() }
             Timer {
                 interval: 1000
                 repeat: true
@@ -584,10 +387,10 @@ Item {
                         }
                         Item { Layout.fillWidth: true }
                         Rectangle {
-                            readonly property string label: root.screen === "converting" ? "CONVERTING"
-                                : (root.screen === "result" ? "READY"
-                                : (service.metadata ? (root.inputKind === "image" ? "IMAGE" : "VIDEO") : ""))
-                            readonly property color tone: root.screen === "converting" ? root.theme.focus : root.theme.mist
+                            readonly property string label: root.session.screen === "converting" ? "CONVERTING"
+                                : (root.session.screen === "result" ? "READY"
+                                : (service.metadata ? (root.session.inputKind === "image" ? "IMAGE" : "VIDEO") : ""))
+                            readonly property color tone: root.session.screen === "converting" ? root.theme.focus : root.theme.mist
                             visible: label !== ""
                             implicitWidth: stateText.implicitWidth + 16
                             implicitHeight: stateText.implicitHeight + 4
@@ -644,7 +447,7 @@ Item {
                         // ── Source ────────────────────────────────────────
                         Item {
                             id: choose
-                            visible: !service.result && root.screen !== "converting" && !service.isBatch
+                            visible: !service.result && root.session.screen !== "converting" && !service.isBatch
                             Layout.fillWidth: true
                             implicitHeight: service.inputPath ? sourceText.implicitHeight : emptyColumn.implicitHeight
                             enabled: !service.busy && !root.pickerBusy
@@ -781,7 +584,7 @@ Item {
                                 theme: root.theme
                                 size: 1.5
                                 Layout.fillWidth: true
-                                text: root.batchReady.length ? root.batchTitle()
+                                text: root.session.batchReady.length ? root.session.batchTitle()
                                     : (service.busy ? "Reading " + service.batch.length + " files…" : "None of these files can be read")
                                 font.bold: true
                             }
@@ -790,8 +593,8 @@ Item {
                                 size: 0.917
                                 Layout.fillWidth: true
                                 // Always one line tall, so recipes do not move.
-                                text: (root.idleWithFile ? "each file  →  " + (root.activeLimit > 0 ? "≤ " + Model.sizeLabel(root.activeLimit) : "quality preset") : "")
-                                    + (root.batchNote() ? (root.idleWithFile ? "  ·  " : "") + root.batchNote() : "") || " "
+                                text: (root.session.idleWithFile ? "each file  →  " + (root.session.activeLimit > 0 ? "≤ " + Model.sizeLabel(root.session.activeLimit) : "quality preset") : "")
+                                    + (root.session.batchNote() ? (root.session.idleWithFile ? "  ·  " : "") + root.session.batchNote() : "") || " "
                                 color: root.theme.dim
                                 elide: Text.ElideRight
                             }
@@ -897,9 +700,9 @@ Item {
                             }
                             CheckRow {
                                 theme: root.theme
-                                checked: prefs.offerRecordings
+                                checked: root.session.prefs.offerRecordings
                                 label: "Offer to shrink screen recordings over 10 MB"
-                                onToggled: prefs.offerRecordings = !prefs.offerRecordings
+                                onToggled: root.session.prefs.offerRecordings = !root.session.prefs.offerRecordings
                             }
                             Hint {
                                 theme: root.theme
@@ -914,15 +717,15 @@ Item {
                         PreviewImage {
                             id: sourcePreview
                             Layout.fillWidth: true
-                            visible: root.idleWithFile && !service.isBatch && (preview.sourceUrl !== "" || preview.sourceLoading)
+                            visible: root.session.idleWithFile && !service.isBatch && (preview.sourceUrl !== "" || preview.sourceLoading)
                             title: "Preview"
                             showHeader: false
-                            boxHeight: root.advanced ? 150 : Math.min(292, Math.round(width * 0.5625))
+                            boxHeight: root.session.advanced ? 150 : Math.min(292, Math.round(width * 0.5625))
                             imageSource: preview.sourceUrl
                             loading: preview.sourceLoading
-                            overlayText: root.trimShown ? Model.timeText(trimBar.playhead) : ""
+                            overlayText: root.session.trimShown ? Model.timeText(trimBar.playhead) : ""
                             overlayDot: root.theme.urgent
-                            badgeText: service.metadata ? (root.inputKind === "image" ? Model.dimensionsText(service.metadata.width, service.metadata.height)
+                            badgeText: service.metadata ? (root.session.inputKind === "image" ? Model.dimensionsText(service.metadata.width, service.metadata.height)
                                 : Math.min(service.metadata.width, service.metadata.height) + "p" + (Model.isHdr(service.metadata) ? "  ·  HDR" : "")) : ""
                             theme: root.theme
                             Behavior on boxHeight { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
@@ -930,7 +733,7 @@ Item {
                         TrimBar {
                             id: trimBar
                             Layout.fillWidth: true
-                            visible: root.trimShown && root.idleWithFile
+                            visible: root.session.trimShown && root.session.idleWithFile
                             duration: (service.metadata && service.metadata.duration) || 0
                             theme: root.theme
                             controlHeight: root.spacing.controlHeight
@@ -942,9 +745,9 @@ Item {
                             Layout.fillWidth: true
                             // Always present with a file, so hovering recipes with
                             // and without a limit never shifts the list.
-                            visible: root.idleWithFile && !service.isBatch && (service.metadata.bytes || 0) > 0
+                            visible: root.session.idleWithFile && !service.isBatch && (service.metadata.bytes || 0) > 0
                             fromBytes: (service.metadata && service.metadata.bytes) || 0
-                            limitBytes: root.activeLimit
+                            limitBytes: root.session.activeLimit
                             theme: root.theme
                         }
 
@@ -955,7 +758,7 @@ Item {
                         ColumnLayout {
                             id: output
                             Layout.fillWidth: true
-                            visible: root.idleWithFile
+                            visible: root.session.idleWithFile
                             spacing: 8
                             RowLayout {
                                 Layout.fillWidth: true
@@ -970,20 +773,20 @@ Item {
                                     font.pixelSize: root.theme.px(1.167)
                                     font.bold: true
                                     selectByMouse: true
-                                    placeholderText: root.inputKind === "image" ? "webp  ·  png 500kb  ·  jpg" : "gif 30mb  ·  mp4 quick  ·  png frames 10fps"
+                                    placeholderText: root.session.inputKind === "image" ? "webp  ·  png 500kb  ·  jpg" : "gif 30mb  ·  mp4 quick  ·  png frames 10fps"
                                     Accessible.name: "What to make, for example gif 30mb"
-                                    onTextEdited: root.commandEdited()
+                                    text: root.session.commandText
+                                    onTextEdited: root.session.editCommand(text)
                                     Keys.onPressed: event => {
                                         if (event.matches(StandardKey.Paste)) { root.pasteFromClipboard(); event.accepted = true }
                                     }
-                                    Keys.onUpPressed: event => { root.moveSelection(-1); event.accepted = true }
-                                    Keys.onDownPressed: event => { root.moveSelection(1); event.accepted = true }
+                                    Keys.onUpPressed: event => { root.session.moveSelection(-1); event.accepted = true }
+                                    Keys.onDownPressed: event => { root.session.moveSelection(1); event.accepted = true }
                                     Keys.onReturnPressed: event => root.commandReturn(event)
                                     Keys.onEnterPressed: event => root.commandReturn(event)
                                     Keys.onEscapePressed: event => {
                                         if (text === "") { event.accepted = false; return }
-                                        text = ""
-                                        root.commandEdited()
+                                        root.session.editCommand("")
                                         event.accepted = true
                                     }
                                     Text {
@@ -1002,20 +805,20 @@ Item {
                                     id: settingsButton
                                     Layout.preferredWidth: commandInput.height
                                     Layout.preferredHeight: commandInput.height
-                                    color: root.advanced ? root.theme.alpha(root.theme.focus, 0.2)
+                                    color: root.session.advanced ? root.theme.alpha(root.theme.focus, 0.2)
                                          : (settingsMouse.containsMouse ? root.theme.alpha(root.theme.fg, 0.08) : root.theme.surface)
                                     border.width: 1
-                                    border.color: root.advanced || settingsButton.activeFocus ? root.theme.focus : root.theme.alpha(root.theme.fg, 0.3)
+                                    border.color: root.session.advanced || settingsButton.activeFocus ? root.theme.focus : root.theme.alpha(root.theme.fg, 0.3)
                                     activeFocusOnTab: true
                                     Accessible.role: Accessible.Button
-                                    Accessible.name: root.advanced ? "Back to recipes" : "All settings"
-                                    Keys.onReturnPressed: root.toggleAdvanced()
-                                    Keys.onEnterPressed: root.toggleAdvanced()
-                                    Keys.onSpacePressed: root.toggleAdvanced()
+                                    Accessible.name: root.session.advanced ? "Back to recipes" : "All settings"
+                                    Keys.onReturnPressed: root.session.toggleAdvanced()
+                                    Keys.onEnterPressed: root.session.toggleAdvanced()
+                                    Keys.onSpacePressed: root.session.toggleAdvanced()
                                     Text {
                                         anchors.centerIn: parent
-                                        text: root.advanced ? "󰅃" : "󰒓"
-                                        color: root.advanced ? root.theme.focus : root.theme.fg
+                                        text: root.session.advanced ? "󰅃" : "󰒓"
+                                        color: root.session.advanced ? root.theme.focus : root.theme.fg
                                         font.family: root.theme.iconFamily
                                         font.pixelSize: root.theme.px(1.25)
                                     }
@@ -1024,11 +827,11 @@ Item {
                                         anchors.fill: parent
                                         hoverEnabled: true
                                         cursorShape: Qt.PointingHandCursor
-                                        onClicked: root.toggleAdvanced()
+                                        onClicked: root.session.toggleAdvanced()
                                     }
                                     Ui.PanelToolTip {
                                         visible: settingsMouse.containsMouse
-                                        text: root.advanced ? "Back to recipes  ·  Ctrl+," : "All settings  ·  Ctrl+,"
+                                        text: root.session.advanced ? "Back to recipes  ·  Ctrl+," : "All settings  ·  Ctrl+,"
                                     }
                                 }
                             }
@@ -1039,14 +842,14 @@ Item {
                                 MonoText {
                                     theme: root.theme
                                     size: 0.833
-                                    text: root.matched.chips.length > 0 ? "understood"
-                                        : (root.inputKind === "image" ? "type a format and size  ·  jpg 200kb  ·  webp" : "type a format and size  ·  gif 10mb  ·  mp4 quick")
+                                    text: root.session.matched.chips.length > 0 ? "understood"
+                                        : (root.session.inputKind === "image" ? "type a format and size  ·  jpg 200kb  ·  webp" : "type a format and size  ·  gif 10mb  ·  mp4 quick")
                                     color: root.theme.faint
                                     height: 20
                                     verticalAlignment: Text.AlignVCenter
                                 }
                                 Repeater {
-                                    model: root.matched.chips
+                                    model: root.session.matched.chips
                                     delegate: Rectangle {
                                         id: chip
                                         required property var modelData
@@ -1071,18 +874,18 @@ Item {
                             // Recipes for this file, filtered by the command line.
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                visible: !root.advanced
+                                visible: !root.session.advanced
                                 spacing: 0
                                 Repeater {
-                                    model: root.matched.rows
+                                    model: root.session.matched.rows
                                     delegate: Rectangle {
                                         id: recipeRow
                                         required property var modelData
                                         required property int index
-                                        readonly property bool current: recipeRow.index === root.selectedRow
+                                        readonly property bool current: recipeRow.index === root.session.selectedRow
                                         readonly property bool blocked: recipeRow.modelData.problem !== ""
-                                        readonly property string detail: Model.recipeDetail(recipeRow.modelData.fields, root.inputKind, service.metadata, root.convertSeconds)
-                                        readonly property string note: Model.recipeNote(recipeRow.modelData.fields, root.inputKind, root.convertSeconds)
+                                        readonly property string detail: Model.recipeDetail(recipeRow.modelData.fields, root.session.inputKind, service.metadata, root.session.convertSeconds)
+                                        readonly property string note: Model.recipeNote(recipeRow.modelData.fields, root.session.inputKind, root.session.convertSeconds)
                                         Layout.fillWidth: true
                                         implicitHeight: recipeLine.implicitHeight + 18
                                         color: recipeRow.current ? root.theme.alpha(root.theme.focus, 0.08)
@@ -1159,8 +962,8 @@ Item {
                                             cursorShape: recipeRow.blocked ? Qt.ArrowCursor : Qt.PointingHandCursor
                                             // Only a moving pointer selects: a row sliding under a
                                             // still cursor must not change the selection.
-                                            onPositionChanged: if (root.selectedRow !== recipeRow.index) root.selectedRow = recipeRow.index
-                                            onClicked: root.runRecipe(recipeRow.index)
+                                            onPositionChanged: if (root.session.selectedRow !== recipeRow.index) root.session.selectedRow = recipeRow.index
+                                            onClicked: root.session.runRecipe(recipeRow.index)
                                         }
                                     }
                                 }
@@ -1168,21 +971,21 @@ Item {
                                     theme: root.theme
                                     Layout.topMargin: 6
                                     visible: text !== ""
-                                    text: root.matched.note
+                                    text: root.session.matched.note
                                     color: root.theme.fg
                                 }
                                 Hint {
                                     theme: root.theme
                                     Layout.topMargin: 6
-                                    visible: root.outputFolder !== ""
-                                    text: "saves to " + Model.folderLabel(root.outputFolder, root.homeDir)
+                                    visible: root.session.outputFolder !== ""
+                                    text: "saves to " + Model.folderLabel(root.session.outputFolder, root.homeDir)
                                 }
                             }
 
                             // Every field; edits rewrite the command line.
                             Rectangle {
                                 Layout.fillWidth: true
-                                visible: root.advanced
+                                visible: root.session.advanced
                                 implicitHeight: fields.implicitHeight + 2
                                 color: root.theme.alpha(root.theme.fg, 0.02)
                                 border.width: 1
@@ -1200,22 +1003,22 @@ Item {
                                             Layout.fillWidth: true
                                             spacing: 8
                                             Repeater {
-                                                model: Model.formatGroups(root.inputKind, service.capabilities)
+                                                model: Model.formatGroups(root.session.inputKind, service.capabilities)
                                                 delegate: Segments {
                                                     id: formatGroup
                                                     required property var modelData
                                                     options: formatGroup.modelData.items.map(item => ({ value: item, label: item === Model.SEQUENCE ? "SEQ" : item.toUpperCase() }))
-                                                    value: formatGroup.modelData.items.indexOf(root.formatValue) >= 0 ? root.formatValue : ""
+                                                    value: formatGroup.modelData.items.indexOf(root.session.formatValue) >= 0 ? root.session.formatValue : ""
                                                     theme: root.theme
                                                     Accessible.name: formatGroup.modelData.title + " formats"
-                                                    onChanged: v => { root.formatValue = v; root.syncCommand() }
+                                                    onChanged: v => { root.session.formatValue = v; root.session.syncCommand() }
                                                 }
                                             }
                                         }
                                         Hint {
                                             theme: root.theme
-                                            text: root.unavailableFormats !== "" ? root.unavailableFormats
-                                                : (root.inputKind === "image" ? "image formats" : "video formats  ·  stills  ·  SEQ = every frame as PNG")
+                                            text: root.session.unavailableFormats !== "" ? root.session.unavailableFormats
+                                                : (root.session.inputKind === "image" ? "image formats" : "video formats  ·  stills  ·  SEQ = every frame as PNG")
                                             color: root.theme.faint
                                             font.pixelSize: root.theme.px(0.833)
                                         }
@@ -1223,24 +1026,24 @@ Item {
                                     FieldRow {
                                         theme: root.theme
                                         label: "MODE"
-                                        enabled: root.formatValue !== Model.SEQUENCE
+                                        enabled: root.session.formatValue !== Model.SEQUENCE
                                         Segments {
                                             options: [{ value: "0", label: "target size" }, { value: "1", label: "quick" }]
-                                            value: String(root.modeIndex)
+                                            value: String(root.session.modeIndex)
                                             theme: root.theme
                                             Accessible.name: "Conversion mode"
-                                            onChanged: v => { root.modeIndex = Number(v); root.syncCommand() }
+                                            onChanged: v => { root.session.modeIndex = Number(v); root.session.syncCommand() }
                                         }
                                     }
                                     FieldRow {
                                         theme: root.theme
                                         label: "MAX SIZE"
-                                        enabled: root.sizeShown
+                                        enabled: root.session.sizeShown
                                         RowLayout {
                                             spacing: 8
                                             Ui.TextField {
                                                 id: sizeInput
-                                                text: "50"
+                                                text: root.session.sizeText
                                                 Layout.preferredWidth: root.theme.px(6.5)
                                                 foreground: root.theme.fg
                                                 accent: root.theme.accent
@@ -1250,14 +1053,14 @@ Item {
                                                 horizontalAlignment: TextInput.AlignRight
                                                 Accessible.name: "Maximum file size"
                                                 inputMethodHints: Qt.ImhFormattedNumbersOnly
-                                                onTextEdited: root.syncCommand()
+                                                onTextEdited: { root.session.sizeText = text; root.session.syncCommand() }
                                             }
                                             Segments {
                                                 options: ["MB", "KB"]
-                                                value: root.unitText
+                                                value: root.session.unitText
                                                 theme: root.theme
                                                 Accessible.name: "Size unit"
-                                                onChanged: v => { root.unitIndex = v === "KB" ? 1 : 0; root.syncCommand() }
+                                                onChanged: v => { root.session.unitIndex = v === "KB" ? 1 : 0; root.session.syncCommand() }
                                             }
                                         }
                                         // Common upload limits, one click each.
@@ -1277,7 +1080,7 @@ Item {
                                                 delegate: Rectangle {
                                                     id: presetChip
                                                     required property var modelData
-                                                    readonly property bool on: sizeInput.text === String(presetChip.modelData.size) && root.unitText === presetChip.modelData.unit
+                                                    readonly property bool on: root.session.sizeText === String(presetChip.modelData.size) && root.session.unitText === presetChip.modelData.unit
                                                     implicitWidth: presetText.implicitWidth + 12
                                                     implicitHeight: 18
                                                     color: presetMouse.containsMouse ? root.theme.surface : "transparent"
@@ -1297,9 +1100,9 @@ Item {
                                                         hoverEnabled: true
                                                         cursorShape: Qt.PointingHandCursor
                                                         onClicked: {
-                                                            sizeInput.text = String(presetChip.modelData.size)
-                                                            root.unitIndex = presetChip.modelData.unit === "KB" ? 1 : 0
-                                                            root.syncCommand()
+                                                            root.session.sizeText = String(presetChip.modelData.size)
+                                                            root.session.unitIndex = presetChip.modelData.unit === "KB" ? 1 : 0
+                                                            root.session.syncCommand()
                                                         }
                                                     }
                                                 }
@@ -1307,7 +1110,7 @@ Item {
                                         }
                                         Hint {
                                             theme: root.theme
-                                            visible: !Model.validSize(sizeInput.text)
+                                            visible: !Model.validSize(root.session.sizeText)
                                             text: "Enter a size greater than zero, for example 50 or 0.5."
                                             color: root.theme.urgent
                                             font.pixelSize: root.theme.px(0.833)
@@ -1316,19 +1119,19 @@ Item {
                                     FieldRow {
                                         theme: root.theme
                                         label: "PREFER"
-                                        enabled: root.sizeShown && root.formatValue === "GIF" && root.inputKind !== "image"
+                                        enabled: root.session.sizeShown && root.session.formatValue === "GIF" && root.session.inputKind !== "image"
                                         Segments {
                                             options: [{ value: "0", label: "motion" }, { value: "1", label: "balanced" }, { value: "2", label: "detail" }]
-                                            value: String(root.preferenceIndex)
+                                            value: String(root.session.preferenceIndex)
                                             theme: root.theme
                                             Accessible.name: "Quality preference"
-                                            onChanged: v => { root.preferenceIndex = Number(v); root.syncCommand() }
+                                            onChanged: v => { root.session.preferenceIndex = Number(v); root.session.syncCommand() }
                                         }
                                         Hint {
                                             theme: root.theme
                                             text: ["GIF only  ·  keep smooth motion, drop resolution first",
                                                    "GIF only  ·  trade resolution and frame rate evenly",
-                                                   "GIF only  ·  keep a sharp picture, drop frames first"][root.preferenceIndex] || ""
+                                                   "GIF only  ·  keep a sharp picture, drop frames first"][root.session.preferenceIndex] || ""
                                             color: root.theme.faint
                                             font.pixelSize: root.theme.px(0.833)
                                         }
@@ -1336,26 +1139,26 @@ Item {
                                     FieldRow {
                                         theme: root.theme
                                         label: "QUALITY"
-                                        visible: root.formatValue !== Model.SEQUENCE
-                                        enabled: root.modeIndex === 1
+                                        visible: root.session.formatValue !== Model.SEQUENCE
+                                        enabled: root.session.modeIndex === 1
                                         Segments {
                                             options: [{ value: "0", label: "small" }, { value: "1", label: "balanced" }, { value: "2", label: "high" }]
-                                            value: String(root.presetIndex)
+                                            value: String(root.session.presetIndex)
                                             theme: root.theme
                                             Accessible.name: "Quality preset"
-                                            onChanged: v => { root.presetIndex = Number(v); root.syncCommand() }
+                                            onChanged: v => { root.session.presetIndex = Number(v); root.session.syncCommand() }
                                         }
                                     }
                                     FieldRow {
                                         theme: root.theme
                                         label: "FRAMES"
-                                        visible: root.formatValue === Model.SEQUENCE
+                                        visible: root.session.formatValue === Model.SEQUENCE
                                         Segments {
                                             options: [{ value: "0", label: "every" }, { value: "24", label: "24 fps" }, { value: "10", label: "10 fps" }, { value: "5", label: "5 fps" }, { value: "1", label: "1 fps" }]
-                                            value: String(root.sequenceFps)
+                                            value: String(root.session.sequenceFps)
                                             theme: root.theme
                                             Accessible.name: "Frames per second to keep"
-                                            onChanged: v => { root.sequenceFps = Number(v); root.syncCommand() }
+                                            onChanged: v => { root.session.sequenceFps = Number(v); root.session.syncCommand() }
                                         }
                                     }
                                     FieldRow {
@@ -1373,10 +1176,10 @@ Item {
                                             MonoText {
                                                 theme: root.theme
                                                 Layout.fillWidth: true
-                                                text: root.outputFolder ? Model.folderLabel(root.outputFolder, root.homeDir)
+                                                text: root.session.outputFolder ? Model.folderLabel(root.session.outputFolder, root.homeDir)
                                                     : (service.inputPath ? "next to source  ·  " + Model.folderLabel(Model.dirname(service.inputPath), root.homeDir) : "next to source")
-                                                color: root.outputFolder ? root.theme.fg : root.theme.dim
-                                                font.bold: root.outputFolder !== ""
+                                                color: root.session.outputFolder ? root.theme.fg : root.theme.dim
+                                                font.bold: root.session.outputFolder !== ""
                                                 elide: Text.ElideLeft
                                                 Accessible.name: "Output folder: " + text
                                             }
@@ -1388,10 +1191,10 @@ Item {
                                             }
                                             TextButton {
                                                 theme: root.theme
-                                                visible: root.outputFolder !== ""
+                                                visible: root.session.outputFolder !== ""
                                                 label: "×"
                                                 Accessible.name: "Save next to the source again"
-                                                onClicked: root.setOutputFolder("")
+                                                onClicked: root.session.setOutputFolder("")
                                             }
                                         }
                                         Row {
@@ -1399,14 +1202,14 @@ Item {
                                             activeFocusOnTab: true
                                             Accessible.role: Accessible.CheckBox
                                             Accessible.name: "Remember this folder"
-                                            Keys.onSpacePressed: root.toggleRememberFolder()
+                                            Keys.onSpacePressed: root.session.toggleRememberFolder()
                                             Rectangle {
                                                 width: 11
                                                 height: 11
                                                 anchors.verticalCenter: parent.verticalCenter
-                                                color: prefs.rememberFolder ? root.theme.sage : "transparent"
+                                                color: root.session.prefs.rememberFolder ? root.theme.sage : "transparent"
                                                 border.width: 1
-                                                border.color: parent.activeFocus ? root.theme.focus : (prefs.rememberFolder ? root.theme.sage : root.theme.alpha(root.theme.fg, 0.4))
+                                                border.color: parent.activeFocus ? root.theme.focus : (root.session.prefs.rememberFolder ? root.theme.sage : root.theme.alpha(root.theme.fg, 0.4))
                                             }
                                             MonoText {
                                                 theme: root.theme
@@ -1417,7 +1220,7 @@ Item {
                                                     anchors.fill: parent
                                                     anchors.leftMargin: -19
                                                     cursorShape: Qt.PointingHandCursor
-                                                    onClicked: root.toggleRememberFolder()
+                                                    onClicked: root.session.toggleRememberFolder()
                                                 }
                                             }
                                         }
@@ -1442,7 +1245,7 @@ Item {
                                                 MonoText {
                                                     theme: root.theme
                                                     Layout.fillWidth: true
-                                                    text: Model.outputName(service.inputPath, root.currentFields())
+                                                    text: Model.outputName(service.inputPath, root.session.currentFields())
                                                     font.bold: true
                                                     elide: Text.ElideMiddle
                                                 }
@@ -1450,31 +1253,31 @@ Item {
                                                     theme: root.theme
                                                     size: 0.833
                                                     Layout.fillWidth: true
-                                                    text: root.fieldsRecipe.problem || root.fieldsRecipe.note || root.fieldsRecipe.detail
-                                                    color: root.fieldsRecipe.problem ? root.theme.urgent : root.theme.dim
+                                                    text: root.session.fieldsRecipe.problem || root.session.fieldsRecipe.note || root.session.fieldsRecipe.detail
+                                                    color: root.session.fieldsRecipe.problem ? root.theme.urgent : root.theme.dim
                                                     wrapMode: Text.WordWrap
                                                 }
                                             }
                                             TextButton {
                                                 theme: root.theme
                                                 key: "★"
-                                                label: root.activePinned ? "unpin" : "pin"
-                                                Accessible.name: root.activePinned ? "Unpin this recipe" : "Pin this recipe to the top of the list"
-                                                onClicked: root.togglePin()
+                                                label: root.session.activePinned ? "unpin" : "pin"
+                                                Accessible.name: root.session.activePinned ? "Unpin this recipe" : "Pin this recipe to the top of the list"
+                                                onClicked: root.session.togglePin()
                                             }
                                             Rectangle {
                                                 id: convertButton
                                                 implicitWidth: convertRow.implicitWidth + 28
                                                 implicitHeight: convertRow.implicitHeight + 18
-                                                color: root.canConvert ? (convertMouse.pressed ? Qt.darker(root.theme.focus, 1.15) : root.theme.focus) : root.theme.alpha(root.theme.fg, 0.12)
+                                                color: root.session.canConvert ? (convertMouse.pressed ? Qt.darker(root.theme.focus, 1.15) : root.theme.focus) : root.theme.alpha(root.theme.fg, 0.12)
                                                 border.width: convertButton.activeFocus ? 2 : 0
                                                 border.color: root.theme.fg
-                                                activeFocusOnTab: root.canConvert
+                                                activeFocusOnTab: root.session.canConvert
                                                 Accessible.role: Accessible.Button
                                                 Accessible.name: "Convert"
-                                                Keys.onReturnPressed: root.startConversion()
-                                                Keys.onEnterPressed: root.startConversion()
-                                                Keys.onSpacePressed: root.startConversion()
+                                                Keys.onReturnPressed: root.session.startConversion()
+                                                Keys.onEnterPressed: root.session.startConversion()
+                                                Keys.onSpacePressed: root.session.startConversion()
                                                 Row {
                                                     id: convertRow
                                                     anchors.centerIn: parent
@@ -1485,7 +1288,7 @@ Item {
                                                             theme: root.theme
                                                             required property string modelData
                                                             text: modelData
-                                                            color: root.canConvert ? root.theme.bg : root.theme.faint
+                                                            color: root.session.canConvert ? root.theme.bg : root.theme.faint
                                                             font.bold: true
                                                         }
                                                     }
@@ -1493,8 +1296,8 @@ Item {
                                                 MouseArea {
                                                     id: convertMouse
                                                     anchors.fill: parent
-                                                    cursorShape: root.canConvert ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                                    onClicked: root.startConversion()
+                                                    cursorShape: root.session.canConvert ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                                    onClicked: root.session.startConversion()
                                                 }
                                             }
                                         }
@@ -1505,7 +1308,7 @@ Item {
 
                         // ── Converting ────────────────────────────────────
                         ColumnLayout {
-                            visible: root.screen === "converting"
+                            visible: root.session.screen === "converting"
                             Layout.fillWidth: true
                             spacing: 16
                             PreviewImage {
@@ -1526,7 +1329,7 @@ Item {
                                     theme: root.theme
                                     size: 0.917
                                     Layout.fillWidth: true
-                                    text: (service.isBatch ? root.batchReady.length + " files" : Model.name(service.inputPath)) + "  →  " + root.jobCommand
+                                    text: (service.isBatch ? root.session.batchReady.length + " files" : Model.name(service.inputPath)) + "  →  " + root.session.jobCommand
                                     color: root.theme.dim
                                     elide: Text.ElideMiddle
                                 }
@@ -1535,7 +1338,7 @@ Item {
                                     size: 1.5
                                     Layout.fillWidth: true
                                     text: service.cancelling ? "Cancelling…"
-                                        : service.isBatch ? "File " + Math.min(root.batchReady.length, root.batchFinished + 1) + " of " + root.batchReady.length
+                                        : service.isBatch ? "File " + Math.min(root.session.batchReady.length, root.session.batchFinished + 1) + " of " + root.session.batchReady.length
                                         : (service.phase.indexOf("Finding") === 0 ? "Finding the best quality that fits" : service.phase)
                                     font.bold: true
                                     wrapMode: Text.WordWrap
@@ -1557,7 +1360,7 @@ Item {
                                     }
                                     Text {
                                         visible: !progressTrack.indeterminate
-                                        text: Math.round((service.isBatch ? root.batchProgress : service.progress) * 100) + "%"
+                                        text: Math.round((service.isBatch ? root.session.batchProgress : service.progress) * 100) + "%"
                                         color: root.theme.fg
                                         font.family: root.theme.family
                                         font.pixelSize: root.theme.px(0.917)
@@ -1575,7 +1378,7 @@ Item {
                                         visible: !progressTrack.indeterminate
                                         height: parent.height
                                         color: root.theme.focus
-                                        width: parent.width * Math.max(0, Math.min(1, service.isBatch ? root.batchProgress : service.progress))
+                                        width: parent.width * Math.max(0, Math.min(1, service.isBatch ? root.session.batchProgress : service.progress))
                                         Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                                     }
                                     Rectangle {
@@ -1601,7 +1404,7 @@ Item {
                                 Layout.fillWidth: true
                                 visible: service.candidates.length > 0
                                 spacing: 8
-                                readonly property real span: Math.max(root.jobLimitBytes * 1.39,
+                                readonly property real span: Math.max(root.session.jobLimitBytes * 1.39,
                                     Math.max.apply(null, service.candidates.map(c => c.estimated_bytes || 0)), 1)
                                 SectionLabel { theme: root.theme; text: "CANDIDATES" }
                                 Repeater {
@@ -1610,7 +1413,7 @@ Item {
                                         id: cand
                                         required property var modelData
                                         readonly property real bytes: cand.modelData.estimated_bytes || 0
-                                        readonly property bool fits: root.jobLimitBytes <= 0 || cand.bytes <= root.jobLimitBytes
+                                        readonly property bool fits: root.session.jobLimitBytes <= 0 || cand.bytes <= root.session.jobLimitBytes
                                         Layout.fillWidth: true
                                         spacing: 4
                                         RowLayout {
@@ -1643,8 +1446,8 @@ Item {
                                                 color: cand.fits ? root.theme.sage : root.theme.urgent
                                             }
                                             Rectangle {
-                                                visible: root.jobLimitBytes > 0
-                                                x: parent.width * root.jobLimitBytes / candList.span
+                                                visible: root.session.jobLimitBytes > 0
+                                                x: parent.width * root.session.jobLimitBytes / candList.span
                                                 width: 1
                                                 height: 10
                                                 color: root.theme.fg
@@ -1675,14 +1478,14 @@ Item {
                         // Reading a file: the phase on its own.
                         Hint {
                             theme: root.theme
-                            visible: service.busy && root.screen !== "converting"
+                            visible: service.busy && root.session.screen !== "converting"
                             text: service.phase
                         }
 
                         // ── Result ────────────────────────────────────────
                         ResultView {
                             Layout.fillWidth: true
-                            visible: root.screen === "result" && !service.isBatch
+                            visible: root.session.screen === "result" && !service.isBatch
                             result: service.result || ({})
                             sourcePreview: preview.sourceUrl
                             resultPreview: preview.resultUrl
@@ -1693,13 +1496,13 @@ Item {
                             sourceMeta: service.metadata ? Model.dimensionsText(service.metadata.width, service.metadata.height) + "  ·  " + Model.compactSize(service.metadata.bytes) : ""
                             resultMeta: service.result ? Model.dimensionsText(service.result.width, service.result.height) + "  ·  " + Model.compactSize(service.result.bytes) : ""
                             sourceBytes: (service.metadata && service.metadata.bytes) || 0
-                            limitBytes: root.jobLimitBytes
+                            limitBytes: root.session.jobLimitBytes
                             theme: root.theme
                         }
                         // Batch summary: the sizes before and after, what failed.
                         ColumnLayout {
                             Layout.fillWidth: true
-                            visible: root.screen === "result" && service.isBatch
+                            visible: root.session.screen === "result" && service.isBatch
                             spacing: 4
                             RowLayout {
                                 spacing: 10
@@ -1740,16 +1543,16 @@ Item {
                         }
                         ColumnLayout {
                             Layout.fillWidth: true
-                            visible: root.screen === "result" && service.isBatch
+                            visible: root.session.screen === "result" && service.isBatch
                             spacing: 0
-                            ActionRow { theme: root.theme; primary: true; glyph: "󰉋"; key: "⏎"; label: "Open the folder"; onTriggered: Qt.openUrlExternally(Model.fileUri(root.batchFolder())) }
+                            ActionRow { theme: root.theme; primary: true; glyph: "󰉋"; key: "⏎"; label: "Open the folder"; onTriggered: Qt.openUrlExternally(Model.fileUri(root.session.batchFolder())) }
                             ActionRow { theme: root.theme; glyph: "󰆏"; key: "c"; label: "Copy all files to clipboard"; onTriggered: root.copy(service.result.paths.map(p => Model.fileUri(p)).join("\r\n") + "\r\n", true) }
                             ActionRow { theme: root.theme; glyph: "󰅍"; key: "p"; label: "Copy all paths"; onTriggered: root.copy(service.result.paths.join("\n"), false) }
                             ActionRow { theme: root.theme; glyph: "󰐕"; key: "n"; label: "Convert more"; onTriggered: root.convertAnother() }
                         }
                         ColumnLayout {
                             Layout.fillWidth: true
-                            visible: root.screen === "result" && !service.isBatch
+                            visible: root.session.screen === "result" && !service.isBatch
                             spacing: 0
                             ActionRow { theme: root.theme; primary: true; glyph: "󰈔"; key: "⏎"; label: service.result && service.result.kind === "sequence" ? "Open frames" : "Open file"; onTriggered: Qt.openUrlExternally(Model.fileUri(service.result.path)) }
                             ActionRow { theme: root.theme; glyph: "󰉋"; key: "o"; label: "Show in folder"; onTriggered: root.openResultFolder() }
@@ -1783,7 +1586,7 @@ Item {
                         }
                         Hint { theme: root.theme; text: service.phase; visible: !service.busy && !service.result && text.indexOf("Cancelled") === 0; color: root.theme.fg }
                         // The gifsicle tip only matters when a GIF is about to be made.
-                        Hint { theme: root.theme; text: service.notice; visible: text !== "" && !service.busy && (text.indexOf("gifsicle") < 0 || (root.inputKind !== "image" && root.activeFormat === "GIF")) }
+                        Hint { theme: root.theme; text: service.notice; visible: text !== "" && !service.busy && (text.indexOf("gifsicle") < 0 || (root.session.inputKind !== "image" && root.session.activeFormat === "GIF")) }
                         Ui.Button {
                             id: detailsButton
                             property bool checked: false
@@ -1833,12 +1636,12 @@ Item {
                         Repeater {
                             model: ({
                                 empty: [["⏎", "browse"], ["ctrl v", "paste"], ["drop", "a file"]],
-                                recipes: [["↑↓", "choose"], ["⏎", "convert"], ["alt " + (root.matched.rows.length > 1 ? "1–" + Math.min(9, root.matched.rows.length) : "1"), "pick"], ["ctrl d", root.activePinned ? "unpin" : "pin"], ["ctrl ,", "settings"]],
-                                settings: [["tab", "next field"], ["←→", "choose"], ["ctrl d", root.activePinned ? "unpin" : "pin"], ["ctrl ⏎", "convert"]],
+                                recipes: [["↑↓", "choose"], ["⏎", "convert"], ["alt " + (root.session.matched.rows.length > 1 ? "1–" + Math.min(9, root.session.matched.rows.length) : "1"), "pick"], ["ctrl d", root.session.activePinned ? "unpin" : "pin"], ["ctrl ,", "settings"]],
+                                settings: [["tab", "next field"], ["←→", "choose"], ["ctrl d", root.session.activePinned ? "unpin" : "pin"], ["ctrl ⏎", "convert"]],
                                 converting: [],
                                 result: service.isBatch ? [["⏎", "folder"], ["c", "copy all"], ["p", "paths"], ["n", "more"]]
                                     : [["⏎", "open"], ["o", "folder"], ["c", "copy"], ["p", "path"], ["n", "another"]]
-                            })[root.screen] || []
+                            })[root.session.screen] || []
                             delegate: Row {
                                 id: keyHint
                                 required property var modelData
@@ -1862,7 +1665,7 @@ Item {
                         MonoText {
                             theme: root.theme
                             size: 0.833
-                            text: root.screen === "settings" ? "esc back to recipes" : (root.screen === "converting" ? "esc cancel" : "esc close")
+                            text: root.session.screen === "settings" ? "esc back to recipes" : (root.session.screen === "converting" ? "esc cancel" : "esc close")
                             color: root.theme.faint
                         }
                     }

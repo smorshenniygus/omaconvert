@@ -48,6 +48,24 @@ class QmlLifecycle(unittest.TestCase):
             self.assertIn('PASS batch rows update in place', output, output[-2000:])
             self.assertNotIn('FAIL', output)
 
+    def test_session_logic(self):
+        with tempfile.TemporaryDirectory(prefix='omaconvert-qml-') as directory:
+            folder = Path(directory)
+            shutil.copytree(ROOT / 'services', folder / 'services')
+            harness = (ROOT / 'tests/qml/SessionHarness.qml').read_text().replace('../../services', 'services')
+            (folder / 'shell.qml').write_text(harness)
+            runtime = folder / 'runtime'
+            runtime.mkdir(mode=0o700)
+            environment = dict(os.environ, QT_QPA_PLATFORM='offscreen', QT_QPA_PLATFORMTHEME='',
+                               XDG_RUNTIME_DIR=str(runtime), QT_QUICK_CONTROLS_STYLE='Basic',
+                               SESSION_PREFS=str(folder / 'preferences.ini'))
+            environment.pop('WAYLAND_DISPLAY', None)
+            completed = subprocess.run(['qs', '-p', str(folder), '--no-color'], env=environment,
+                                       text=True, capture_output=True, timeout=10)
+            output = completed.stdout + completed.stderr
+            self.assertIn('PASS session keeps recipes, line and fields in sync', output, output[-2000:])
+            self.assertNotIn('FAIL', output)
+
     def test_last_line_without_newline(self):
         with tempfile.TemporaryDirectory(prefix='omaconvert-qml-') as directory:
             folder = Path(directory)
