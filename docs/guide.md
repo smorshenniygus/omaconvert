@@ -62,6 +62,7 @@ The tool aims at 97% of the limit. MP4 and WebM use two-pass encoding with a cor
 - Converted files go next to the source, or into the folder chosen under **Save to**.
 - Preferences: `~/.config/omaconvert/preferences.ini`. It stores the last recipe and other settings, plus the output folder only if you ask it to remember it. File names are never saved.
 - Preview thumbnails: `~/.cache/omaconvert/previews`, at most two small PNGs, readable only by you (0600 in a 0700 folder). They are deleted when the preview is cleared or the window closes.
+- FFmpeg's list of encoders, formats and filters: `~/.cache/omaconvert/toolbox.json`, refreshed when the `ffmpeg` executable changes.
 - Results are never readable by more people than their source: converting a private (0600) file gives a private file.
 - Only after you switch on Open With: `~/.local/share/applications/io.github.smorshenniygus.omaconvert.desktop`. Switching it off removes the file.
 - Only after you switch on the hotkey: a block between `-- >>> OmaConvert hotkey` and `-- <<< OmaConvert hotkey` in `~/.config/hypr/bindings.lua`.

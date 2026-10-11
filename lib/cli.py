@@ -70,6 +70,8 @@ def build_parser():
     parser.add_argument("--capabilities", action="store_true",
                         help="report which output formats this FFmpeg can write, as JSON, and exit")
     parser.add_argument("--version", action="store_true", help="print the backend version as JSON and exit")
+    parser.add_argument("--status", action="store_true",
+                        help="everything the window needs when it opens, as one status event, and exit")
     parser.add_argument("--paste", action="store_true",
                         help="report what the clipboard holds for the window (an image is saved to Pictures/OmaConvert)")
     parser.add_argument("--hotkey", choices=("on", "off", "status"),
@@ -81,6 +83,31 @@ def build_parser():
     return parser
 
 
+def _status():
+    """Version, dependencies, format capabilities, the Open With entry and
+    the hotkey in one event: one process when the window opens instead of
+    four. A part that cannot be read is reported with an `error` field."""
+    from . import desktop, launcher
+    deps = dependencies()
+    missing = [name for name in ("ffmpeg", "ffprobe") if not deps[name]]
+    status = {"version": __version__, "dependencies": dict(deps, ok=not missing)}
+    if missing:
+        status["error"] = {
+            "message": "Required media tools are missing: " + ", ".join(missing) + ". Install FFmpeg.",
+            "details": "Not found on PATH: " + ", ".join(missing)}
+    else:
+        try:
+            status["capabilities"] = formats.capabilities(formats.toolbox())
+        except (OSError, subprocess.SubprocessError) as exc:
+            status["capabilities_error"] = str(exc)
+    for name, read in (("open_with", launcher.open_with_status), ("hotkey", desktop.hotkey_status)):
+        try:
+            status[name] = read()
+        except (OSError, RuntimeError) as exc:
+            status[name] = {"error": str(exc)}
+    return status
+
+
 def main(argv=None):
     sink = EventSink()
     runner = ProcessRunner(sink)
@@ -90,6 +117,9 @@ def main(argv=None):
         args = build_parser().parse_args(argv)
         if args.version:
             sink.emit("version", version=__version__)
+            return 0
+        if args.status:
+            sink.emit("status", **_status())
             return 0
         if args.paste:
             from . import desktop

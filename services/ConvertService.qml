@@ -70,6 +70,29 @@ Item {
     function check() { launch(["--check"], "check") }
     // Independent of the job queue: a probe/convert must not cancel it, and
     // it must not cancel them. At most once per session unless it failed.
+    // Everything the window needs when it opens, in one backend call:
+    // version, dependencies, capabilities, the Open With entry and the hotkey.
+    function loadStatus() { statusCall.run(["--status"]) }
+    function applyStatus(event) {
+        var deps = event.dependencies || {}
+        dependenciesReady = deps.ok !== false
+        if (event.version) backendVersion = String(event.version)
+        notice = deps.gifsicle === false ? "Tip: install gifsicle to make GIFs a little smaller." : ""
+        if (event.error && !busy) { error = event.error.message || ""; details = event.error.details || "" }
+        if (event.capabilities) capabilities = event.capabilities
+        if (event.open_with) {
+            if (event.open_with.error) openWithError = event.open_with.error
+            else {
+                openWith = event.open_with
+                // Refresh our own entry written by an older version.
+                if (openWith.enabled && openWith.current === false) Qt.callLater(() => root.setOpenWith(true))
+            }
+        }
+        if (event.hotkey) {
+            if (event.hotkey.error) hotkeyError = event.hotkey.error
+            else hotkey = event.hotkey
+        }
+    }
     function loadCapabilities() {
         if (capabilities === null) capabilitiesCall.run(["--capabilities"])
     }
@@ -329,6 +352,11 @@ Item {
                 if (event.enabled && event.current === false) Qt.callLater(() => root.setOpenWith(true))
             } else if (event.event === "error") root.openWithError = event.details || event.message
         }
+    }
+    CliCall {
+        id: statusCall
+        executable: root.executable
+        onEvent: event => { if (event.event === "status") root.applyStatus(event) }
     }
     CliCall {
         id: capabilitiesCall

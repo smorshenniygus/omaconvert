@@ -17,7 +17,6 @@ Item {
     property var shell: null
     property var manifest: null
     property bool opened: false
-    property bool checked: false
     property bool closingFromHost: false
     readonly property var menuTheme: Commons.Color.menu
     readonly property var fonts: Style.font
@@ -124,15 +123,12 @@ Item {
             if (requestedPath) service.selectFile(requestedPath)
             else service.error = "Choose a local file, not a remote URL."
         }
-        else if (!checked && !service.busy) { checked = true; service.check() }
         // Closing deleted the cached thumbnails; rebuild them for a file still open.
         if (service.metadata && service.inputPath && !payload.file && !(payload.files && payload.files.length)) {
             preview.requestSource(service.inputPath, root.trimShown ? trimBar.playhead : 0)
             if (service.result && service.result.path) preview.requestResult(service.result.first_frame || service.result.path)
         }
-        service.loadCapabilities()
-        service.loadOpenWith()
-        service.loadHotkey()
+        service.loadStatus()
         Qt.callLater(() => choose.forceActiveFocus())
     }
     // Fields <-> the command line. A recipe, the typed text and the "+"

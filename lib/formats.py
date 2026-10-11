@@ -10,6 +10,8 @@ once per process (the window asks once per session and keeps the answer).
 Input extensions are only a picker hint; decodability is proven by ffprobe.
 """
 from dataclasses import dataclass
+import json
+import os
 import re
 import shutil
 import subprocess
@@ -136,23 +138,87 @@ def _run(ffmpeg, flag, timeout):
 
 
 _CACHE = {}
+# Asking FFmpeg for its tables costs about 160 ms (three runs); the answer
+# changes only when the executable does. Kept for the last few executables.
+_DISK_ENTRIES = 8
+
+
+def _disk_cache_path():
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "omaconvert", "toolbox.json")
+
+
+def _executable_key(ffmpeg):
+    real = os.path.realpath(ffmpeg)
+    stat = os.stat(real)
+    return f"{real}|{stat.st_size}|{stat.st_mtime_ns}|{stat.st_ino}"
+
+
+def _read_disk_cache():
+    try:
+        with open(_disk_cache_path(), encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_disk_cache(key, tools):
+    """Best effort: an unwritable cache only costs the next run 160 ms."""
+    path = _disk_cache_path()
+    data = _read_disk_cache()
+    data.pop(key, None)
+    data[key] = {"encoders": sorted(tools.encoders), "muxers": sorted(tools.muxers),
+                 "filters": sorted(tools.filters)}
+    data = dict(list(data.items())[-_DISK_ENTRIES:])
+    temp = f"{path}.{os.getpid()}.tmp"
+    old = os.umask(0o077)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(temp, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+        os.replace(temp, path)
+    except OSError:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+    finally:
+        os.umask(old)
 
 
 def toolbox(ffmpeg=None, timeout=20):
-    """What the installed FFmpeg can write. Cached per executable path."""
+    """What the installed FFmpeg can write. Cached per executable: in this
+    process, and on disk keyed by the executable's path, size and mtime."""
     ffmpeg = ffmpeg or shutil.which("ffmpeg")
     if not ffmpeg:
         return None
     if ffmpeg not in _CACHE:
-        _CACHE[ffmpeg] = Toolbox(
-            frozenset(_table(_run(ffmpeg, "-encoders", timeout))),
-            frozenset(_flagged_muxers(_run(ffmpeg, "-muxers", timeout))),
-            frozenset(_table(_run(ffmpeg, "-filters", timeout))),
-        )
+        try:
+            key = _executable_key(ffmpeg)
+        except OSError:
+            key = None
+        stored = _read_disk_cache().get(key) if key else None
+        try:
+            tools = Toolbox(frozenset(stored["encoders"]), frozenset(stored["muxers"]),
+                            frozenset(stored["filters"])) if stored else None
+        except (KeyError, TypeError):
+            tools = None
+        if tools is None:
+            tools = Toolbox(
+                frozenset(_table(_run(ffmpeg, "-encoders", timeout))),
+                frozenset(_flagged_muxers(_run(ffmpeg, "-muxers", timeout))),
+                frozenset(_table(_run(ffmpeg, "-filters", timeout))),
+            )
+            if key:
+                _write_disk_cache(key, tools)
+        _CACHE[ffmpeg] = tools
     return _CACHE[ffmpeg]
 
 
 def clear_cache():
+    """Forget the tables in this process (the disk cache stays valid: it is
+    keyed by the executable itself)."""
     _CACHE.clear()
 
 
