@@ -686,6 +686,38 @@ class ImageConversionTests(unittest.TestCase):
         self.assertLessEqual(output.stat().st_size, cap)
         self.assertLess(result["width"], 1200)
 
+    def test_image_target_search_matches_the_full_walk(self):
+        """The binary search over the size ladder picks the same step (same
+        bytes) as walking it top-down, with and without alpha."""
+        from lib.encoders import encode_image_target
+        from lib.probe import probe_media
+        sources = {
+            "noise.png": "nullsrc=s=1400x1000,geq=random(1)*255:128:random(2)*255",
+            "bars.png": "testsrc2=s=1600x900",
+            "alpha.png": "testsrc2=s=1200x800,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='255*X/W'",
+            "small.png": "testsrc2=s=640x480",
+        }
+        cases = [("noise.png", "jpg", 90_000), ("noise.png", "webp", 60_000), ("bars.png", "png", 400_000),
+                 ("alpha.png", "webp", 40_000), ("alpha.png", "png", 300_000), ("small.png", "jpg", 500_000)]
+        for name, graph in sources.items():
+            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+                            "-i", graph, "-frames:v", "1", str(self.root / name)], check=True)
+        for name, fmt, limit in cases:
+            with self.subTest(name=name, fmt=fmt, limit=limit):
+                source = self.root / name
+                info = probe_media(source, self.runner)
+                results = {}
+                for exhaustive in (False, True):
+                    work = self.root / f"work-{name}-{fmt}-{exhaustive}"
+                    work.mkdir()
+                    out = work / f"out.{fmt}"
+                    shape = encode_image_target(self.runner, source, out, info, fmt, limit,
+                                                exhaustive=exhaustive)
+                    results[exhaustive] = (shape, out.stat().st_size)
+                    self.assertLessEqual(out.stat().st_size, limit)
+                    self.assertEqual(sorted(p.name for p in work.iterdir()), [out.name])
+                self.assertEqual(results[False], results[True])
+
     def test_transparency_survives_png_and_webp(self):
         source = self.make_rgba_png()
         for fmt in ("png", "webp"):

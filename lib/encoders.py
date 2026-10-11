@@ -246,40 +246,107 @@ def encode_image_quick(runner, input_path, output, info, fmt, preset, seek=0.0):
     return width, height
 
 
-def encode_image_target(runner, input_path, output, info, fmt, requested_bytes, seek=0.0):
-    scales = (1.0, 0.85, 0.7, 0.55, 0.4, 0.3, 0.2, 0.12, 0.06)
-    qualities = (95, 90, 84, 76, 66, 54, 42, 30, 20)
+# Size ladder for an image under a limit, best first: scale and quality
+# fall together, so the encoded size falls step by step.
+_IMAGE_SCALES = (1.0, 0.85, 0.7, 0.55, 0.4, 0.3, 0.2, 0.12, 0.06)
+_IMAGE_QUALITIES = (95, 90, 84, 76, 66, 54, 42, 30, 20)
+# Up to this many pixels the top step is tried first (about 4 MP: a full
+# quality encode there takes well under a second).
+_TRY_TOP_FIRST_PIXELS = 4_000_000
+
+
+def decoded_frame(runner, input_path, info, workdir, seek=0.0):
+    """Decode the one frame an image result is made from, once, into an
+    uncompressed file in `workdir`; every candidate is encoded from it.
+
+    Seeking (or trimming a transport stream) and HDR tone mapping happen
+    here. Without tone mapping the pixel format is kept as decoded, alpha
+    included, so candidates see exactly the frame they saw before. Returns
+    (path, info for that file)."""
+    path = Path(workdir) / "frame.nut"
+    input_seek = can_seek_input(info)
+    trim = _trim_filter(input_seek, seek)
+    if trim:
+        trim = chain(trim, "setpts=PTS-STARTPTS")
+    filters = chain(trim, sdr_filter(info))
+    runner.capture(_base_ffmpeg() + _input_args(input_path, seek, input_seek=input_seek)
+                   + ["-map", f"0:{info.stream_index}"] + (["-vf", filters] if filters else [])
+                   + ["-frames:v", "1", "-c:v", "rawvideo", "-f", "nut", str(path)],
+                   "FFmpeg could not read this image.")
+    runner.check_cancelled()
+    # The frame is upright, SDR and alone in its file.
+    return path, replace(info, stream_index=0, transfer="", format_name="nut", duration=0.0)
+
+
+def encode_image_target(runner, input_path, output, info, fmt, requested_bytes, seek=0.0,
+                        exhaustive=False):
+    """Encode the best ladder step that fits `requested_bytes`.
+
+    The ladder is monotonic, so a binary search finds the first fitting step
+    in about 3 encodes instead of walking down 5-7 of them; the step above
+    the answer is checked too, in case two neighbours break monotonicity.
+    `exhaustive` walks the ladder top-down (the reference the search must
+    agree with in tests)."""
     runner.sink.emit("analyzing", progress=0.0, target_bytes=requested_bytes,
                      internal_target_bytes=int(requested_bytes * SIZE_HEADROOM))
-    smallest = None
-    for number, (scale, quality) in enumerate(zip(scales, qualities), 1):
-        width, height = _image_dimensions(info, scale)
-        candidate = output.with_name(f"candidate-{number}.{fmt}")
-        candidate.unlink(missing_ok=True)
-        size = encode_image(runner, input_path, candidate, info, fmt, width, height,
-                            quality, number, len(scales), seek)
-        runner.sink.emit("candidate", width=width, height=height, fps=0.0,
-                         estimated_bytes=size, progress=number / len(scales))
-        if smallest is None or size < smallest[0]:
-            if smallest is not None:
-                smallest[3].unlink(missing_ok=True)
-            smallest = (size, width, height, candidate)
-        elif candidate != smallest[3]:
+    count = len(_IMAGE_SCALES)
+    planned = count if exhaustive else math.ceil(math.log2(count + 1)) + 1
+    frame, frame_info = decoded_frame(runner, input_path, info, output.parent, seek)
+    sizes = {}
+
+    def size_of(step):
+        if step not in sizes:
+            width, height = _image_dimensions(info, _IMAGE_SCALES[step])
+            candidate = output.with_name(f"candidate-{step + 1}.{fmt}")
             candidate.unlink(missing_ok=True)
-        if size <= requested_bytes:
-            output.unlink(missing_ok=True)
-            candidate.replace(output)
-            if smallest is not None and smallest[3] != candidate:
-                smallest[3].unlink(missing_ok=True)
-            runner.sink.emit("analyzing", progress=1.0)
-            return width, height
-    smallest_size = smallest[0] if smallest else None
-    if smallest is not None:
-        smallest[3].unlink(missing_ok=True)
-    raise OmaConvertError(
-        f"This image cannot reasonably fit into {size_text(requested_bytes)}.",
-        f"Smallest result found: {smallest_size} bytes.",
-    )
+            number = len(sizes) + 1
+            size = encode_image(runner, frame, candidate, frame_info, fmt, width, height,
+                                _IMAGE_QUALITIES[step], number, max(planned, number))
+            sizes[step] = (size, width, height, candidate)
+            runner.sink.emit("candidate", width=width, height=height, fps=0.0, estimated_bytes=size,
+                             progress=min(0.95, number / planned))
+        return sizes[step][0]
+
+    best = None
+    if exhaustive:
+        for step in range(count):
+            if size_of(step) <= requested_bytes:
+                best = step
+                break
+    else:
+        low, high = 0, count - 1
+        # Small images often fit at full quality: one cheap encode settles it.
+        if info.width * info.height <= _TRY_TOP_FIRST_PIXELS:
+            if size_of(0) <= requested_bytes:
+                best, high = 0, -1
+            else:
+                low = 1
+        while low <= high:
+            middle = (low + high) // 2
+            if size_of(middle) <= requested_bytes:
+                best, high = middle, middle - 1
+            else:
+                low = middle + 1
+        while best is not None and best > 0 and best - 1 not in sizes:
+            if size_of(best - 1) > requested_bytes:
+                break
+            best -= 1
+    try:
+        if best is None:
+            smallest = min(size for size, *_ in sizes.values())
+            raise OmaConvertError(
+                f"This image cannot reasonably fit into {size_text(requested_bytes)}.",
+                f"Smallest result found: {smallest} bytes.",
+            )
+        _size, width, height, candidate = sizes[best]
+        output.unlink(missing_ok=True)
+        candidate.replace(output)
+        runner.sink.emit("analyzing", progress=1.0)
+        return width, height
+    finally:
+        for _size, _w, _h, candidate in sizes.values():
+            candidate.unlink(missing_ok=True)
+        frame.unlink(missing_ok=True)
 
 
 # libvpx encodes one tile row at a time unless told otherwise: row
