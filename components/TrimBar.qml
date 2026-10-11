@@ -31,13 +31,15 @@ ColumnLayout {
     property real playhead: 0
     readonly property bool valid: endTime - startTime >= 0.1
         && startTime >= 0 && (duration <= 0 || endTime <= duration + 0.001)
-    signal scrubRequested(real position)
+    // `draft`: the handle is still moving; a cheap nearby frame is enough.
+    signal scrubRequested(real position, bool draft)
 
     readonly property real handleWidth: 6
     readonly property real trackHeight: Math.max(22, Math.round(root.controlHeight * 0.72))
 
     function reset() {
         scrubTimer.stop()
+        draftTimer.stop()
         pendingScrub = -1
         activeHandle = "first"
         startTime = 0
@@ -53,17 +55,34 @@ ColumnLayout {
     property real pendingScrub: -1
     // Which handle arrows drive; updated by press and release.
     property string activeHandle: "first"
+    // While a handle moves, a draft frame at most every 250 ms; the exact
+    // frame once it rests for 600 ms (keyboard) or on release (scrubNow).
     function noteMove(position) {
         pendingScrub = position
+        draftPending = true
+        if (!draftTimer.running) draftTimer.start()
         scrubTimer.restart()
     }
     function scrubNow(position) {
         scrubTimer.stop()
+        draftTimer.stop()
         pendingScrub = -1
+        draftPending = false
         playhead = position
-        root.scrubRequested(position)
+        root.scrubRequested(position, false)
     }
+    property bool draftPending: false
 
+    Timer {
+        id: draftTimer
+        interval: 250
+        onTriggered: {
+            if (root.draftPending && root.pendingScrub >= 0) {
+                root.draftPending = false
+                root.scrubRequested(root.pendingScrub, true)
+            }
+        }
+    }
     Timer {
         id: scrubTimer
         interval: 600
@@ -71,8 +90,10 @@ ColumnLayout {
             if (root.pendingScrub >= 0) {
                 var position = root.pendingScrub
                 root.pendingScrub = -1
+                root.draftPending = false
+                draftTimer.stop()
                 root.playhead = position
-                root.scrubRequested(position)
+                root.scrubRequested(position, false)
             }
         }
     }

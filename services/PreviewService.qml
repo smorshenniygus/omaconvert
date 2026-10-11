@@ -26,13 +26,19 @@ Item {
     readonly property alias resultWidth: result.imageWidth
     readonly property alias resultHeight: result.imageHeight
 
-    function requestSource(inputPath, position) {
+    // `draft`: the keyframe at or before `position` (fast, while a handle is
+    // dragged); the exact frame is requested again on release. `meta`: the
+    // probe event of `inputPath`, so the backend need not probe it again.
+    function requestSource(inputPath, position, draft, meta) {
         // An omitted position asks for a representative frame; explicit zero
         // means the first frame and must neither share its key nor omit the seek.
         var hasPosition = position !== undefined && position !== null
         var pos = hasPosition ? Number(position) : 0
-        source.request(inputPath, inputPath + "@" + (hasPosition ? pos.toFixed(1) : "default"),
-                       hasPosition ? ["--preview-position", String(pos)] : [])
+        var args = hasPosition ? ["--preview-position", String(pos)] : []
+        if (draft && hasPosition) args.push("--preview-fast")
+        if (meta && typeof meta === "object") args.push("--preview-meta", JSON.stringify(meta))
+        source.request(inputPath, inputPath + "@" + (hasPosition ? pos.toFixed(1) : "default")
+                       + (draft && hasPosition ? "~draft" : ""), args)
     }
     function requestResult(inputPath) { result.request(inputPath, inputPath, []) }
     function clearSource() { source.clear() }

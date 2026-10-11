@@ -82,8 +82,10 @@ Item {
     // Seconds that will be converted: the trimmed part of a video.
     readonly property real convertSeconds: root.trimShown ? Math.max(0, trimBar.endTime - trimBar.startTime) : ((service.metadata && service.metadata.duration) || 0)
     readonly property string lastCommand: root.inputKind === "image" ? prefs.lastImageCommand : prefs.lastVideoCommand
+    // Without the trimmed length: dragging a trim handle must not rebuild
+    // every recipe row. Rows work out their length-dependent texts.
     readonly property var matched: service.metadata
-        ? Model.matchRecipes(commandInput.text, root.inputKind, service.metadata, service.capabilities, root.lastCommand, root.convertSeconds, root.pinned)
+        ? Model.matchRecipes(commandInput.text, root.inputKind, service.metadata, service.capabilities, root.lastCommand, 0, root.pinned)
         : ({ rows: [], chips: [], note: "" })
     readonly property var fieldsRecipe: Model.recipe(root.currentFields(), root.inputKind, service.metadata, service.capabilities, root.convertSeconds)
     readonly property bool readyToConvert: !service.busy && !root.pickerBusy && service.metadata !== null && service.dependenciesReady && (!root.trimShown || trimBar.valid)
@@ -125,7 +127,7 @@ Item {
         }
         // Closing deleted the cached thumbnails; rebuild them for a file still open.
         if (service.metadata && service.inputPath && !payload.file && !(payload.files && payload.files.length)) {
-            preview.requestSource(service.inputPath, root.trimShown ? trimBar.playhead : 0)
+            preview.requestSource(service.inputPath, root.trimShown ? trimBar.playhead : 0, false, service.metadata)
             if (service.result && service.result.path) preview.requestResult(service.result.first_frame || service.result.path)
         }
         service.loadStatus()
@@ -360,7 +362,7 @@ Item {
         onMetadataChanged: {
             if (service.metadata && service.inputPath) {
                 preview.clearResult()
-                preview.requestSource(service.inputPath)
+                preview.requestSource(service.inputPath, undefined, false, service.metadata)
                 // Deferred past binding propagation so TrimBar.duration is current.
                 Qt.callLater(() => {
                     trimBar.reset()
@@ -1186,8 +1188,8 @@ Item {
                             fontFamily: root.fontFamily
                             fontSize: root.fonts.body
                             controlHeight: root.spacing.controlHeight
-                            onScrubRequested: (position) => {
-                                if (service.inputPath) preview.requestSource(service.inputPath, position)
+                            onScrubRequested: (position, draft) => {
+                                if (service.inputPath) preview.requestSource(service.inputPath, position, draft, service.metadata)
                             }
                         }
                         SizeBudget {
@@ -1339,12 +1341,14 @@ Item {
                                         required property int index
                                         readonly property bool current: recipeRow.index === root.selectedRow
                                         readonly property bool blocked: recipeRow.modelData.problem !== ""
+                                        readonly property string detail: Model.recipeDetail(recipeRow.modelData.fields, root.inputKind, service.metadata, root.convertSeconds)
+                                        readonly property string note: Model.recipeNote(recipeRow.modelData.fields, root.inputKind, root.convertSeconds)
                                         Layout.fillWidth: true
                                         implicitHeight: recipeLine.implicitHeight + 18
                                         color: recipeRow.current ? root.alpha(root.focusColor, 0.08)
                                              : (recipeMouse.containsMouse ? root.surface : "transparent")
                                         Accessible.role: Accessible.Button
-                                        Accessible.name: recipeRow.modelData.title + ". " + (recipeRow.modelData.problem || recipeRow.modelData.detail)
+                                        Accessible.name: recipeRow.modelData.title + ". " + (recipeRow.modelData.problem || recipeRow.detail)
                                         Rectangle { visible: recipeRow.current; width: 2; height: parent.height; color: root.focusColor }
                                         Rectangle { visible: !recipeRow.current; anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.line }
                                         RowLayout {
@@ -1390,8 +1394,8 @@ Item {
                                                 Text {
                                                     textFormat: Text.PlainText
                                                     Layout.fillWidth: true
-                                                    text: recipeRow.modelData.problem || recipeRow.modelData.note || recipeRow.modelData.detail
-                                                    color: recipeRow.blocked ? root.urgent : (recipeRow.modelData.note ? root.fg : root.dim)
+                                                    text: recipeRow.modelData.problem || recipeRow.note || recipeRow.detail
+                                                    color: recipeRow.blocked ? root.urgent : (recipeRow.note ? root.fg : root.dim)
                                                     font.family: root.fontFamily
                                                     font.pixelSize: root.px(0.833)
                                                     wrapMode: Text.WordWrap

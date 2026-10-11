@@ -8,7 +8,7 @@ from . import __version__
 from .errors import Cancelled, OmaConvertError
 from .events import EventSink
 from . import formats
-from .preview import DEFAULT_EDGE, forget_preview, generate_preview
+from .preview import DEFAULT_EDGE, forget_preview, generate_preview, media_info_from_meta
 from .probe import probe_media
 from .process import ProcessRunner, dependencies
 
@@ -56,6 +56,10 @@ def build_parser():
                         help="preview longest edge in pixels (64-640, default 320)")
     parser.add_argument("--preview-position", type=_number("Preview position must be a number of seconds."),
                         help="preview seek position in seconds")
+    parser.add_argument("--preview-meta", metavar="JSON",
+                        help="the probe event of the --preview input, to skip probing it again")
+    parser.add_argument("--preview-fast", action="store_true",
+                        help="take the keyframe at or before --preview-position (for scrubbing)")
     parser.add_argument("--forget-preview", metavar="PATH", action="append",
                         help="delete a cached window preview (src-preview.png or res-preview.png) and exit")
     parser.add_argument("--sequence", action="store_true",
@@ -180,8 +184,10 @@ def main(argv=None):
         if args.preview:
             if not args.preview_output:
                 raise OmaConvertError("--preview-output is required with --preview.")
+            info = media_info_from_meta(args.preview_meta) if args.preview_meta else None
             preview = generate_preview(runner, args.preview, args.preview_output,
-                                       max_edge=args.preview_size, position=args.preview_position)
+                                       max_edge=args.preview_size, position=args.preview_position,
+                                       info=info, fast=args.preview_fast)
             sink.emit("preview", **preview)
             return 0
         # The window sends --batch: what is left of a selection may be one file.

@@ -6,13 +6,14 @@ Images are scaled directly; videos seek to a representative frame
 (about 25% in, clamped) instead of decoding from the start.
 """
 from contextlib import contextmanager
+import json
 import os
 from pathlib import Path
 import tempfile
 
 from .color import chain, sdr_filter
 from .errors import OmaConvertError
-from .probe import probe_media
+from .probe import MediaInfo, probe_media
 from .process import PROBE_TIMEOUT
 
 # The window's two cache files. --forget-preview deletes only these names.
@@ -124,16 +125,34 @@ def forget_preview(path):
     return {"path": str(target), "removed": removed}
 
 
+def media_info_from_meta(raw):
+    """The window's probe event (JSON) as MediaInfo, so a preview of a file
+    the window already read skips ffprobe (about 40-60 ms)."""
+    from dataclasses import fields
+    try:
+        data = json.loads(raw)
+        known = {f.name for f in fields(MediaInfo)}
+        return MediaInfo(**{key: value for key, value in data.items() if key in known})
+    except (TypeError, ValueError) as exc:
+        raise OmaConvertError("--preview-meta must be the probe event of this file as JSON.", str(exc)) from exc
+
+
 def generate_preview(runner, input_path, output_path, max_edge=DEFAULT_EDGE,
-                     position=None):
-    """Extract one bounded PNG preview. Returns dict with path/width/height/bytes."""
+                     position=None, info=None, fast=False):
+    """Extract one bounded PNG preview. Returns dict with path/width/height/bytes.
+
+    `info` is the probe of this file when the caller already has it. `fast`
+    takes the keyframe at or before `position` instead of decoding up to the
+    exact frame: for scrubbing, where the exact frame follows on release."""
     max_edge = clamp_edge(max_edge)
     source = Path(input_path).expanduser()
     if not source.is_file():
         raise OmaConvertError(
             "The input file does not exist or is not a regular file.", str(source))
-    info = probe_media(source, runner)
+    if info is None:
+        info = probe_media(source, runner)
     seek = preview_position(info, position)
+    fast = bool(fast and seek and info.kind != "image")
     output = Path(output_path).expanduser()
     _private_folder(output.parent)
 
@@ -143,16 +162,29 @@ def generate_preview(runner, input_path, output_path, max_edge=DEFAULT_EDGE,
     fd, temp_name = tempfile.mkstemp(prefix=f".{output.name}.", suffix=".tmp.png", dir=output.parent)
     os.close(fd)
     temp = Path(temp_name)
-    args = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
-    if seek:
-        args += ["-ss", f"{seek:.3f}"]
-    args += ["-i", str(source), "-map", f"0:{info.stream_index}",
-             "-vf", chain(_scale_filter(max_edge, info), sdr_filter(info)),
-             "-frames:v", "1", "-c:v", "png", "-f", "image2", "-update", "1", str(temp)]
-    try:
+
+    def extract(keyframe_only):
+        args = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
+        if keyframe_only:
+            args += ["-skip_frame", "nokey", "-noaccurate_seek"]
+        if seek:
+            args += ["-ss", f"{seek:.3f}"]
+        args += ["-i", str(source), "-map", f"0:{info.stream_index}",
+                 "-vf", chain(_scale_filter(max_edge, info), sdr_filter(info)),
+                 "-frames:v", "1", "-c:v", "png", "-f", "image2", "-update", "1", str(temp)]
         with _private_umask():
             runner.capture(args, "Could not generate a preview image.", timeout=PROBE_TIMEOUT)
         runner.check_cancelled()
+
+    try:
+        if fast:
+            # Some files give no keyframe this way (FFmpeg drops it before
+            # the seek point); then the draft is simply the exact frame.
+            extract(True)
+            if temp.stat().st_size == 0:
+                fast = False
+        if not fast:
+            extract(False)
         temp.chmod(0o600)
         os.replace(temp, output)
     finally:
@@ -170,4 +202,5 @@ def generate_preview(runner, input_path, output_path, max_edge=DEFAULT_EDGE,
         "kind": info.kind,
         "source": str(source.resolve()),
         "seek": seek or 0.0,
+        "draft": fast,
     }
