@@ -52,11 +52,13 @@ def preview_position(info, requested=None):
     return round(position, 3)
 
 
-def _scale_filter(max_edge):
-    return (
-        f"scale={max_edge}:{max_edge}:"
-        "force_original_aspect_ratio=decrease:flags=lanczos,setsar=1"
-    )
+def _scale_filter(max_edge, info):
+    # Probe dimensions already account for pixel aspect and autorotation.
+    # Fit that display shape, not the encoded pixel grid, before resetting SAR.
+    ratio = max_edge / max(info.width, info.height)
+    width = max(1, round(info.width * ratio))
+    height = max(1, round(info.height * ratio))
+    return f"scale={width}:{height}:flags=lanczos,setsar=1"
 
 
 def cache_dir():
@@ -129,7 +131,7 @@ def generate_preview(runner, input_path, output_path, max_edge=DEFAULT_EDGE,
     if seek:
         args += ["-ss", f"{seek:.3f}"]
     args += ["-i", str(source), "-map", f"0:{info.stream_index}",
-             "-vf", chain(_scale_filter(max_edge), sdr_filter(info)),
+             "-vf", chain(_scale_filter(max_edge, info), sdr_filter(info)),
              "-frames:v", "1", "-c:v", "png", "-f", "image2", "-update", "1", str(temp)]
     try:
         with _private_umask():

@@ -73,6 +73,83 @@ class TrimTests(unittest.TestCase):
         self.assertTrue(durations)
         self.assertLess(max(durations) - min(durations), 0.5)
 
+    def test_transport_stream_nonzero_trim_all_encoding_paths(self):
+        source = self.root / "renamed-transport.mp4"  # Container, not extension, controls seeking.
+        subprocess.run([
+            "ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+            "testsrc2=s=160x90:r=10:d=5", "-f", "lavfi", "-i",
+            "sine=frequency=440:duration=5", "-c:v", "libx264", "-g", "250",
+            "-c:a", "aac", "-shortest", "-f", "mpegts", str(source),
+        ], check=True)
+        expected = self.root / "expected.png"
+        subprocess.run([
+            "ffmpeg", "-v", "error", "-i", str(source), "-ss", "0.5",
+            "-frames:v", "1", str(expected),
+        ], check=True)
+
+        def pixels(path):
+            return subprocess.check_output([
+                "ffmpeg", "-v", "error", "-i", str(path),
+                "-pix_fmt", "rgb24", "-f", "rawvideo", "-",
+            ])
+
+        for fmt, target, sequence, end in [
+            ("mp4", None, False, 1.5), ("mp4", 100_000, False, 1.5),
+            ("gif", None, False, 1.5), ("gif", 400_000, False, 4.5),
+            ("png", None, False, 1.5), ("png", None, True, 1.5),
+        ]:
+            with self.subTest(fmt=fmt, target=target, sequence=sequence):
+                result = convert(ProcessRunner(Sink()), source, fmt, None, target,
+                                 "high", "balanced", 0.5, end, sequence=sequence)
+                if sequence:
+                    self.assertEqual(result["frames"], 10)
+                    self.assertEqual(pixels(result["first_frame"]), pixels(expected))
+                elif fmt == "png":
+                    self.assertEqual((result["width"], result["height"]), (160, 90))
+                    self.assertEqual(pixels(result["path"]), pixels(expected))
+                else:
+                    self.assertAlmostEqual(self.probe_duration(result["path"]), end - 0.5, delta=0.2)
+                if fmt == "mp4":
+                    streams = json.loads(subprocess.check_output([
+                        "ffprobe", "-v", "error", "-show_streams", "-of", "json", result["path"],
+                    ]))["streams"]
+                    self.assertEqual({stream["codec_type"] for stream in streams}, {"video", "audio"})
+                    self.assertLess(max(float(stream["duration"]) for stream in streams)
+                                    - min(float(stream["duration"]) for stream in streams), 0.15)
+
+    def test_transport_trim_preserves_delayed_audio_start(self):
+        source = self.root / "delayed.ts"
+        subprocess.run([
+            "ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+            "testsrc2=s=160x90:r=10:d=3", "-itsoffset", "1", "-f", "lavfi", "-i",
+            "sine=frequency=440:duration=2", "-c:v", "libx264", "-g", "250",
+            "-c:a", "aac", "-f", "mpegts", str(source),
+        ], check=True)
+        result = convert(self.runner, source, "mp4", None, None,
+                         "high", "balanced", 0.5, 1.5)
+        streams = json.loads(subprocess.check_output([
+            "ffprobe", "-v", "error", "-show_streams", "-of", "json", result["path"],
+        ]))["streams"]
+        starts = {stream["codec_type"]: float(stream["start_time"]) for stream in streams}
+        self.assertAlmostEqual(starts["audio"] - starts["video"], 0.5, delta=0.1)
+        self.assertAlmostEqual(self.probe_duration(result["path"]), 1.0, delta=0.15)
+
+    def test_transport_trim_to_jpeg_keeps_foreground_first_frame(self):
+        source = self.root / "red.ts"
+        subprocess.run([
+            "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=red:s=160x90:r=10:d=2",
+            "-c:v", "libx264", "-f", "mpegts", str(source),
+        ], check=True)
+        result = convert(self.runner, source, "jpg", None, None,
+                         "high", "balanced", 0.55, 1.55)
+        pixel = subprocess.check_output([
+            "ffmpeg", "-v", "error", "-i", result["path"],
+            "-pix_fmt", "rgb24", "-f", "rawvideo", "-",
+        ])[:3]
+        self.assertGreater(pixel[0], 200)
+        self.assertLess(pixel[1], 40)
+        self.assertLess(pixel[2], 40)
+
     def test_fractional_boundaries(self):
         out = self.root / "frac.mp4"
         convert(self.runner, self.video, "mp4", out, None, "small", "balanced", 2.5, 3.7)

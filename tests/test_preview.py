@@ -74,6 +74,25 @@ class PreviewTests(unittest.TestCase):
         got = generate_preview(self.runner, self.image, output, max_edge=9999)
         self.assertLessEqual(max(got["width"], got["height"]), 640)
 
+    def test_preview_preserves_display_aspect_for_non_square_pixels(self):
+        for sar, expected in (("2/1", (320, 120)), ("1/2", (213, 320))):
+            with self.subTest(sar=sar):
+                source = self.root / "anamorphic.mp4"
+                subprocess.run([
+                    "ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                    "testsrc2=s=320x240:r=10:d=1", "-vf", "setsar=" + sar,
+                    "-c:v", "libx264", str(source),
+                ], check=True)
+                got = generate_preview(self.runner, source, self.root / "anamorphic.png")
+                self.assertEqual((got["width"], got["height"]), expected)
+                rotated = self.root / "rotated.mp4"
+                subprocess.run([
+                    "ffmpeg", "-v", "error", "-y", "-display_rotation:v:0", "90",
+                    "-i", str(source), "-c", "copy", str(rotated),
+                ], check=True)
+                got = generate_preview(self.runner, rotated, self.root / "rotated.png")
+                self.assertEqual((got["width"], got["height"]), expected[::-1])
+
     def test_position_selection(self):
         info = MediaInfo("c.mp4", 8.0, 640, 480, 15.0, "h264", 1000, True)
         self.assertAlmostEqual(preview_position(info), 2.0)
