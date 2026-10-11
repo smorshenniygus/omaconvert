@@ -7,7 +7,7 @@ import subprocess
 
 from .color import sdr_filter
 from .encoders import (
-    TARGET_AUDIO_RATE, encode_gif, encode_image_quick, encode_image_target, encode_png_sequence,
+    TARGET_AUDIO_RATE, can_seek_input, encode_gif, encode_image_quick, encode_image_target, encode_png_sequence,
     encode_video_quick, encode_video_target,
 )
 from .errors import Cancelled, OmaConvertError
@@ -57,7 +57,7 @@ def _analyze_gif(runner, input_path, info, profiles, internal_target, workdir, g
         path = Path(workdir) / f"sample-{index}.gif"
         size = encode_gif(runner, input_path, path, profiles[index], info.duration, workdir,
                           samples=samples, gifsicle=gifsicle, stream_index=info.stream_index,
-                          seek=seek, clip=clip, sdr=sdr_filter(info))
+                          seek=seek, clip=clip, sdr=sdr_filter(info), input_seek=can_seek_input(info))
         estimated = max(size, int(size * info.duration / sample_duration))
         cache[index] = estimated
         runner.sink.emit("candidate", width=profiles[index].width, height=profiles[index].height,
@@ -104,7 +104,7 @@ def _convert_gif(runner, input_path, info, output_temp, requested_bytes, prefere
         candidate_path.unlink(missing_ok=True)
         size = encode_gif(runner, input_path, candidate_path, profile, info.duration, workdir,
                           pass_number=len(attempt_indices), passes=3, gifsicle=gifsicle, stream_index=info.stream_index,
-                          seek=seek, clip=clip, sdr=sdr_filter(info))
+                          seek=seek, clip=clip, sdr=sdr_filter(info), input_seek=can_seek_input(info))
         if smallest is None or size < smallest[0]:
             smallest = (size, profile)
         if size <= requested_bytes:
@@ -128,7 +128,7 @@ def _convert_gif(runner, input_path, info, output_temp, requested_bytes, prefere
         candidate_path.unlink(missing_ok=True)
         size = encode_gif(runner, input_path, candidate_path, profile, info.duration, workdir,
                           pass_number=4, passes=4, gifsicle=gifsicle, stream_index=info.stream_index,
-                          seek=seek, clip=clip, sdr=sdr_filter(info))
+                          seek=seek, clip=clip, sdr=sdr_filter(info), input_seek=can_seek_input(info))
         if smallest is None or size < smallest[0]:
             smallest = (size, profile)
         if size <= requested_bytes:
@@ -358,7 +358,7 @@ def convert(runner, input_path, fmt, output_path, requested_bytes, preset, prefe
                     profile = profiles[index]
                     encode_gif(runner, input_path, temp_output, profile, work.duration, directory,
                                gifsicle=gifsicle, stream_index=work.stream_index,
-                               seek=seek, clip=clip, sdr=sdr_filter(work))
+                               seek=seek, clip=clip, sdr=sdr_filter(work), input_seek=can_seek_input(work))
                 colors = profile.colors
             elif requested_bytes:
                 internal = int(requested_bytes * 0.97)

@@ -43,9 +43,12 @@ Item {
         return Model.fileUri(path) + "?g=" + generation
     }
     function requestSource(inputPath, position) {
-        var pos = Number(position || 0)
+        // An omitted position asks for a representative frame; explicit zero
+        // means the first frame and must neither share its key nor omit the seek.
+        var hasPosition = position !== undefined && position !== null
+        var pos = hasPosition ? Number(position) : 0
         if (!inputPath || !root.executable) return
-        var key = inputPath + "@" + (pos > 0 ? pos.toFixed(1) : "0")
+        var key = inputPath + "@" + (hasPosition ? pos.toFixed(1) : "default")
         if (key === lastSourceInput && (sourceUrl !== "" || sourceLoading)) return
         lastSourceInput = key
         sourceGeneration++
@@ -61,7 +64,7 @@ Item {
         sourceJob.generation = generation
         sourceJob.command = ["python3", root.executable, "--preview", inputPath,
                              "--preview-output", root.sourcePath, "--preview-size", String(Model.previewSize())]
-        if (pos > 0) sourceJob.command = sourceJob.command.concat(["--preview-position", String(pos)])
+        if (hasPosition) sourceJob.command = sourceJob.command.concat(["--preview-position", String(pos)])
         sourceJob.running = true
     }
     function requestResult(inputPath) {

@@ -20,6 +20,7 @@ class MediaInfo:
     stream_index: int = 0
     kind: str = "video"
     transfer: str = ""  # color_transfer, e.g. arib-std-b67 (HLG) or smpte2084 (PQ)
+    format_name: str = ""  # demuxer names; determines whether input seeking is reliable
 
     def event_fields(self):
         return asdict(self)
@@ -109,6 +110,7 @@ def parse_probe_json(raw, path):
         stream_index=int(video.get("index", 0)),
         kind=kind,
         transfer=str(video.get("color_transfer") or ""),
+        format_name=str(fmt.get("format_name") or ""),
     )
 
 

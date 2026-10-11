@@ -62,6 +62,48 @@ class SequenceTests(unittest.TestCase):
         self.assertEqual(result["bytes"], sum(p.stat().st_size for p in folder.iterdir()))
         self.assertEqual(self.leftovers(), [])
 
+    def test_default_sequence_keeps_each_vfr_frame_once(self):
+        source = self.root / "variable.mp4"
+        subprocess.run([
+            "ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+            "testsrc2=s=160x90:r=10:d=1", "-vf",
+            "select='eq(mod(n,4),0)+eq(mod(n,4),1)'", "-fps_mode", "vfr",
+            "-c:v", "libx264", str(source),
+        ], check=True)
+        raw = json.loads(subprocess.check_output([
+            "ffprobe", "-v", "error", "-count_frames", "-show_streams",
+            "-of", "json", str(source),
+        ]))
+        source_count = int(raw["streams"][0]["nb_read_frames"])
+        result = convert(self.runner, source, "png", None, None, "balanced", "balanced", sequence=True)
+        self.assertEqual(source_count, 6)
+        self.assertEqual(result["frames"], source_count)
+        # Compare decoded content, not only the number of output paths.
+        decoded = subprocess.check_output([
+            "ffmpeg", "-v", "error", "-i", str(source), "-pix_fmt", "rgb24",
+            "-f", "rawvideo", "-fps_mode", "passthrough", "-",
+        ])
+        rendered = b"".join(subprocess.check_output([
+            "ffmpeg", "-v", "error", "-i", str(frame), "-pix_fmt", "rgb24",
+            "-f", "rawvideo", "-",
+        ]) for frame in sorted(Path(result["path"]).glob("frame-*.png")))
+        self.assertEqual(rendered, decoded)
+
+    def test_sequence_preserves_nonsquare_pixel_display_shape(self):
+        source = self.root / "anamorphic.mp4"
+        subprocess.run([
+            "ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+            "testsrc2=s=160x90:r=10:d=1", "-vf", "setsar=2",
+            "-c:v", "libx264", str(source),
+        ], check=True)
+        result = convert(self.runner, source, "png", None, None, "balanced", "balanced", sequence=True)
+        self.assertEqual((result["width"], result["height"]), (160, 45))
+        raw = json.loads(subprocess.check_output([
+            "ffprobe", "-v", "error", "-show_streams", "-of", "json", result["first_frame"],
+        ]))["streams"][0]
+        self.assertIn(raw.get("sample_aspect_ratio", "1:1"), ("1:1", "N/A"))
+        self.assertAlmostEqual(int(raw["width"]) / int(raw["height"]), 32 / 9)
+
     def test_rate_and_trim_select_frames(self):
         result = convert(self.runner, self.video, "png", None, None, "balanced", "balanced",
                          0.5, 1.5, sequence=True, sequence_fps=5)
