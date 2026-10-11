@@ -134,9 +134,6 @@ Item {
         root.pasteNote = ""
         service.paste()
     }
-    function prettyKeys(keys) {
-        return String(keys || "").split(" + ").map(k => k === "PERIOD" ? "." : (k.length > 1 ? k[0] + k.slice(1).toLowerCase() : k)).join("+")
-    }
     // Omarchy writes the recording's file name here while it records and
     // removes it once the video is finalized: the file going away is the end.
     property string activeRecording: ""
@@ -390,273 +387,24 @@ Item {
                         width: Math.min(flick.width - 40, root.maxContentWidth)
                         spacing: 16
 
-                        // ── Source ────────────────────────────────────────
-                        Item {
+                        SourceHeader {
                             id: choose
-                            visible: !service.result && root.session.screen !== "converting" && !service.isBatch
-                            Layout.fillWidth: true
-                            implicitHeight: service.inputPath ? sourceText.implicitHeight : emptyColumn.implicitHeight
-                            enabled: !service.busy && !root.pickerBusy
-                            activeFocusOnTab: true
-                            Accessible.role: Accessible.Button
-                            Accessible.name: service.inputPath ? "Change source file" : "Choose a video or image"
-                            readonly property bool dragging: dropArea.containsDrag
-                            readonly property bool hot: chooseMouse.containsMouse || dragging
-                            Keys.onReturnPressed: root.chooseVideo()
-                            Keys.onEnterPressed: root.chooseVideo()
-                            Keys.onSpacePressed: root.chooseVideo()
-
-                            // Loaded: the file as a title, its facts underneath.
-                            RowLayout {
-                                id: sourceText
-                                visible: service.inputPath !== ""
-                                width: parent.width
-                                spacing: 12
-                                ColumnLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 4
-                                    SectionLabel { theme: root.theme; text: "SOURCE" }
-                                    MonoText {
-                                        theme: root.theme
-                                        size: 1.5
-                                        Layout.fillWidth: true
-                                        text: choose.dragging ? "Drop to open" : Model.name(service.inputPath)
-                                        color: choose.activeFocus ? root.theme.focus : root.theme.fg
-                                        font.bold: true
-                                        elide: Text.ElideMiddle
-                                    }
-                                    MonoText {
-                                        theme: root.theme
-                                        size: 0.917
-                                        Layout.fillWidth: true
-                                        text: service.metadata !== null ? Model.mediaDescription(service.metadata)
-                                            : (service.busy ? "Reading media…" : "Not read  ·  choose another file")
-                                        color: root.theme.dim
-                                        elide: Text.ElideRight
-                                    }
-                                }
-                                MonoText {
-                                    theme: root.theme
-                                    size: 0.917
-                                    Layout.alignment: Qt.AlignBottom
-                                    visible: !root.pickerBusy
-                                    text: "change"
-                                    color: choose.hot ? root.theme.fg : root.theme.faint
-                                }
-                            }
-                            // Empty: one big drop target.
-                            ColumnLayout {
-                                id: emptyColumn
-                                visible: service.inputPath === ""
-                                width: parent.width
-                                spacing: 8
-                                SectionLabel { theme: root.theme; text: "SOURCE" }
-                                Rectangle {
-                                    Layout.fillWidth: true
-                                    implicitHeight: 150
-                                    color: choose.dragging ? root.theme.alpha(root.theme.sage, 0.18)
-                                         : (choose.hot ? root.theme.surface : "transparent")
-                                    border.width: 1
-                                    border.color: choose.activeFocus || choose.dragging ? root.theme.focus : root.theme.alpha(root.theme.fg, 0.3)
-                                    ColumnLayout {
-                                        anchors.centerIn: parent
-                                        spacing: 8
-                                        Text {
-                                            Layout.alignment: Qt.AlignHCenter
-                                            text: root.pickerBusy ? "󰔟" : "󰇚"
-                                            color: choose.activeFocus ? root.theme.focus : root.theme.sage
-                                            font.family: root.theme.iconFamily
-                                            font.pixelSize: root.theme.px(2.333)
-                                        }
-                                        MonoText {
-                                            theme: root.theme
-                                            size: 1.167
-                                            Layout.alignment: Qt.AlignHCenter
-                                            text: root.pickerBusy ? "Choosing file…" : (choose.dragging ? "Drop to open" : "Choose a video or image")
-                                            font.bold: true
-                                        }
-                                        MonoText {
-                                            theme: root.theme
-                                            size: 0.917
-                                            Layout.alignment: Qt.AlignHCenter
-                                            text: "⏎ browse  ·  drop a file  ·  ctrl+v paste"
-                                            color: root.theme.faint
-                                        }
-                                    }
-                                }
-                            }
-                            MouseArea {
-                                id: chooseMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: { choose.forceActiveFocus(); root.chooseVideo() }
-                            }
-                            DropArea {
-                                id: dropArea
-                                anchors.fill: parent
-                                onDropped: drop => {
-                                    if (service.busy) return
-                                    var paths = drop.urls.map(url => Model.localPath(url)).filter(path => !!path)
-                                    if (paths.length) { service.selectFiles(paths); drop.acceptProposedAction() }
-                                }
-                            }
+                            theme: root.theme
+                            session: root.session
+                            service: root.convertService
+                            pickerBusy: root.pickerBusy
+                            onChooseRequested: root.chooseVideo()
                         }
-                        // ── Batch: every file with its state ──────────────
-                        ColumnLayout {
-                            id: batchView
-                            Layout.fillWidth: true
-                            visible: service.isBatch
-                            spacing: 6
-                            RowLayout {
-                                Layout.fillWidth: true
-                                SectionLabel { theme: root.theme; text: "BATCH"; Layout.fillWidth: true }
-                                MonoText {
-                                    theme: root.theme
-                                    size: 0.917
-                                    visible: !service.busy && !service.result
-                                    text: "change"
-                                    color: batchChange.containsMouse ? root.theme.fg : root.theme.faint
-                                    MouseArea {
-                                        id: batchChange
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: root.chooseVideo()
-                                    }
-                                }
-                            }
-                            MonoText {
-                                theme: root.theme
-                                size: 1.5
-                                Layout.fillWidth: true
-                                text: root.session.batchReady.length ? root.session.batchTitle()
-                                    : (service.busy ? "Reading " + service.batch.length + " files…" : "None of these files can be read")
-                                font.bold: true
-                            }
-                            MonoText {
-                                theme: root.theme
-                                size: 0.917
-                                Layout.fillWidth: true
-                                // Always one line tall, so recipes do not move.
-                                text: (root.session.idleWithFile ? "each file  →  " + (root.session.activeLimit > 0 ? "≤ " + Model.sizeLabel(root.session.activeLimit) : "quality preset") : "")
-                                    + (root.session.batchNote() ? (root.session.idleWithFile ? "  ·  " : "") + root.session.batchNote() : "") || " "
-                                color: root.theme.dim
-                                elide: Text.ElideRight
-                            }
-                            Rectangle {
-                                Layout.fillWidth: true
-                                implicitHeight: Math.min(batchRows.implicitHeight, 8 * 30) + 2
-                                color: "transparent"
-                                border.width: 1
-                                border.color: root.theme.line
-                                clip: true
-                                Flickable {
-                                    id: batchFlick
-                                    anchors.fill: parent
-                                    anchors.margins: 1
-                                    contentHeight: batchRows.implicitHeight
-                                    interactive: contentHeight > height
-                                    boundsBehavior: Flickable.StopAtBounds
-                                    // Keep the file being converted in view.
-                                    contentY: service.batchCurrent < 0 ? contentY
-                                        : Math.max(0, Math.min(contentHeight - height, service.batchCurrent * 30 - height / 2))
-                                    Behavior on contentY { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                                    Column {
-                                        id: batchRows
-                                        width: batchFlick.width
-                                        Repeater {
-                                            model: service.batchModel
-                                            delegate: Rectangle {
-                                                id: batchRow
-                                                required property string path
-                                                required property string status
-                                                required property bool ok
-                                                required property real bytes
-                                                required property real outputBytes
-                                                required property string message
-                                                readonly property string phaseName: batchRow.status || "reading"
-                                                width: batchRows.width
-                                                height: 30
-                                                color: batchRow.phaseName === "working" ? root.theme.alpha(root.theme.focus, 0.08) : "transparent"
-                                                Rectangle { visible: batchRow.phaseName === "working"; width: 2; height: parent.height; color: root.theme.focus }
-                                                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.theme.alpha(root.theme.fg, 0.06) }
-                                                RowLayout {
-                                                    anchors.fill: parent
-                                                    anchors.leftMargin: 12
-                                                    anchors.rightMargin: 12
-                                                    spacing: 10
-                                                    MonoText {
-                                                        theme: root.theme
-                                                        Layout.preferredWidth: root.theme.px(1)
-                                                        text: ({ reading: "…", queued: "·", working: "▸", done: "✓", failed: "✗", skipped: "–", stopped: "■" })[batchRow.phaseName] || "·"
-                                                        color: batchRow.phaseName === "done" ? root.theme.mist : (batchRow.phaseName === "failed" ? root.theme.urgent
-                                                             : (batchRow.phaseName === "working" ? root.theme.focus : root.theme.faint))
-                                                        font.bold: true
-                                                    }
-                                                    MonoText {
-                                                        theme: root.theme
-                                                        size: 0.917
-                                                        Layout.fillWidth: true
-                                                        text: Model.name(batchRow.path)
-                                                        color: batchRow.phaseName === "skipped" || batchRow.phaseName === "failed" && !batchRow.ok ? root.theme.faint : root.theme.fg
-                                                        elide: Text.ElideMiddle
-                                                    }
-                                                    MonoText {
-                                                        theme: root.theme
-                                                        size: 0.833
-                                                        Layout.maximumWidth: batchRows.width * 0.48
-                                                        text: batchRow.phaseName === "working" ? Math.round(service.progress * 100) + "%"
-                                                            : batchRow.phaseName === "done" ? Model.compactSize(batchRow.bytes) + "  →  " + Model.compactSize(batchRow.outputBytes)
-                                                            : batchRow.phaseName === "failed" || batchRow.phaseName === "skipped" ? (batchRow.message || batchRow.phaseName)
-                                                            : batchRow.phaseName === "stopped" ? "stopped"
-                                                            : batchRow.phaseName === "reading" ? "reading…"
-                                                            : Model.compactSize(batchRow.bytes)
-                                                        color: batchRow.phaseName === "failed" ? root.theme.urgent : (batchRow.phaseName === "done" ? root.theme.mist : root.theme.dim)
-                                                        elide: Text.ElideRight
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                        BatchList {
+                            theme: root.theme
+                            session: root.session
+                            service: root.convertService
+                            onChooseRequested: root.chooseVideo()
                         }
-                        // Omarchy integration, offered before a file is chosen.
-                        // Each switch is opt-in and undone the same way.
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            visible: !service.inputPath && !service.result
-                            spacing: 2
-                            SectionLabel { theme: root.theme; text: "OMARCHY"; Layout.bottomMargin: 4 }
-                            CheckRow {
-                                theme: root.theme
-                                visible: service.openWith !== null
-                                checked: !!(service.openWith && service.openWith.enabled)
-                                label: "Show in Open With and app search"
-                                onToggled: service.setOpenWith(!checked)
-                            }
-                            CheckRow {
-                                theme: root.theme
-                                visible: !!(service.hotkey && service.hotkey.available && (service.hotkey.enabled || service.hotkey.free))
-                                checked: !!(service.hotkey && service.hotkey.enabled)
-                                label: "Hotkey"
-                                detail: root.prettyKeys(service.hotkey ? (service.hotkey.keys || service.hotkey.free) : "")
-                                onToggled: service.setHotkey(!checked)
-                            }
-                            CheckRow {
-                                theme: root.theme
-                                checked: root.session.prefs.offerRecordings
-                                label: "Offer to shrink screen recordings over 10 MB"
-                                onToggled: root.session.prefs.offerRecordings = !root.session.prefs.offerRecordings
-                            }
-                            Hint {
-                                theme: root.theme
-                                Layout.topMargin: 4
-                                text: service.openWithError || service.hotkeyError
-                                    || "The hotkey is a marked line in ~/.config/hypr/bindings.lua. A recording over 10 MB gets a notification that opens it here."
-                                color: service.openWithError || service.hotkeyError ? root.theme.urgent : root.theme.faint
-                            }
+                        IntegrationSwitches {
+                            theme: root.theme
+                            session: root.session
+                            service: root.convertService
                         }
 
                         // ── Preview + trim ────────────────────────────────
