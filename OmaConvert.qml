@@ -10,6 +10,7 @@ import qs.Ui as Ui
 import "services"
 import "services/Model.js" as Model
 import "components"
+import qs.Commons as Commons
 
 Item {
     id: root
@@ -18,7 +19,7 @@ Item {
     property bool opened: false
     property bool checked: false
     property bool closingFromHost: false
-    readonly property var menuTheme: Color.menu
+    readonly property var menuTheme: Commons.Color.menu
     readonly property var fonts: Style.font
     readonly property var spacing: Style.spacing
     property url settingsLocation: Model.fileUri(root.configRoot + "/omaconvert/preferences.ini")
@@ -48,8 +49,8 @@ Item {
     // Palette: theme roles only, so every Omarchy theme dresses the panel.
     readonly property color fg: root.menuTheme.text
     readonly property color bg: root.menuTheme.background
-    readonly property color accent: Color.accent
-    readonly property color urgent: Color.urgent
+    readonly property color accent: Commons.Color.accent
+    readonly property color urgent: Commons.Color.urgent
     readonly property color dim: root.alpha(root.fg, 0.55)
     readonly property color faint: root.alpha(root.fg, 0.32)
     readonly property color line: root.alpha(root.fg, 0.16)
@@ -485,12 +486,12 @@ Item {
         wrapMode: Text.WordWrap
     }
     component ActionButton: Ui.Button {
-        readonly property var menuTheme: Color.menu
+        readonly property var menuTheme: Commons.Color.menu
         readonly property var fontTokens: Style.font
         bordered: true
         focusable: true
         foreground: menuTheme.text
-        accent: Color.accent
+        accent: Commons.Color.accent
         fontFamily: fontTokens.menuFamily
         opacity: enabled ? 1 : 0.4
     }
