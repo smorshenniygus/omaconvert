@@ -40,6 +40,11 @@ Item {
     // {path, status: reading|queued|working|done|failed|skipped, ok, kind,
     //  bytes, width, height, message, output, outputBytes}. Empty for one file.
     property var batch: []
+    // The same rows for the list on screen. A changed row is updated in
+    // place (ListModel.set), so its delegate is kept instead of the whole
+    // list being recreated several times per file. Change `batch` only
+    // through replaceBatch() and updateBatch(), which keep both in step.
+    property ListModel batchModel: ListModel {}
     property string batchKind: ""
     readonly property bool isBatch: batch.length > 1
     property int batchCurrent: -1
@@ -97,7 +102,7 @@ Item {
         if (capabilities === null) capabilitiesCall.run(["--capabilities"])
     }
     function beginProbe(path) {
-        batch = []
+        replaceBatch([])
         batchKind = ""
         inputPath = path
         metadata = null
@@ -139,26 +144,41 @@ Item {
         result = null
         batchKind = ""
         batchCurrent = -1
-        batch = list.map(path => ({ path: path, status: "reading" }))
+        replaceBatch(list.map(path => ({ path: path, status: "reading" })))
         phase = "Reading " + list.length + " files…"
         launch(["--probe-all"].concat(list), "probe-all")
     }
     function batchPaths() {
         return batch.filter(item => item.ok && item.status !== "skipped").map(item => item.path)
     }
+    function batchRow(item) {
+        return { path: item.path || "", status: item.status || "reading", ok: item.ok === true,
+                 bytes: Number(item.bytes || 0), outputBytes: Number(item.outputBytes || 0),
+                 message: item.message || "" }
+    }
+    function replaceBatch(list) {
+        var samePaths = list.length === batchModel.count
+            && list.every((item, i) => batchModel.get(i).path === (item.path || ""))
+        batch = list
+        if (!samePaths) batchModel.clear()
+        for (var i = 0; i < list.length; i++) {
+            if (samePaths) batchModel.set(i, batchRow(list[i]))
+            else batchModel.append(batchRow(list[i]))
+        }
+    }
     function updateBatch(index, fields) {
         if (index < 0 || index >= batch.length) return
         var copy = batch.slice()
         copy[index] = Object.assign({}, copy[index], fields)
         batch = copy
+        batchModel.set(index, batchRow(copy[index]))
     }
     function convertBatch(format, mode, size, unit, preset, preference, outputDir, sequenceFps) {
         if (busy || !metadata || !dependenciesReady) return
         var paths = batchPaths()
         if (paths.length === 0) return
-        var copy = batch.map(item => item.ok && item.status !== "skipped"
-            ? Object.assign({}, item, { status: "queued", message: "", output: "", outputBytes: 0 }) : item)
-        batch = copy
+        replaceBatch(batch.map(item => item.ok && item.status !== "skipped"
+            ? Object.assign({}, item, { status: "queued", message: "", output: "", outputBytes: 0 }) : item))
         batchOrder = paths
         batchCurrent = -1
         result = null
@@ -291,10 +311,10 @@ Item {
         if (nextPath) transitioning = true
         currentJob = null
         if (operation === "batch")
-            batch = batch.map(item => item.status === "working" || item.status === "queued"
-                ? Object.assign({}, item, { status: "stopped" }) : item)
+            replaceBatch(batch.map(item => item.status === "working" || item.status === "queued"
+                ? Object.assign({}, item, { status: "stopped" }) : item))
         else if (operation === "probe-all") // cancelled or crashed while reading
-            batch = batch.map(item => item.status === "reading" ? Object.assign({}, item, { status: "stopped" }) : item)
+            replaceBatch(batch.map(item => item.status === "reading" ? Object.assign({}, item, { status: "stopped" }) : item))
         if (wasCancelling && !result) phase = "Cancelled — your source is unchanged."
         else if (!job.terminalEvent && (lastExit !== 0 || ((operation === "convert" || operation === "batch") && !result)))
             error = "The converter stopped unexpectedly. See Details and try again."

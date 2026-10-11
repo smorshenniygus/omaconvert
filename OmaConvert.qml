@@ -317,7 +317,7 @@ Item {
         if (prefs.offerRecordings) Quickshell.execDetached(["python3", service.executable, "--offer-recording", file])
     }
     function convertAnother() {
-        service.batch = []
+        service.replaceBatch([])
         service.batchKind = ""
         service.result = null
         service.metadata = null
@@ -1062,12 +1062,16 @@ Item {
                                         id: batchRows
                                         width: batchFlick.width
                                         Repeater {
-                                            model: service.batch
+                                            model: service.batchModel
                                             delegate: Rectangle {
                                                 id: batchRow
-                                                required property var modelData
-                                                required property int index
-                                                readonly property string phaseName: batchRow.modelData.status || "reading"
+                                                required property string path
+                                                required property string status
+                                                required property bool ok
+                                                required property real bytes
+                                                required property real outputBytes
+                                                required property string message
+                                                readonly property string phaseName: batchRow.status || "reading"
                                                 width: batchRows.width
                                                 height: 30
                                                 color: batchRow.phaseName === "working" ? root.alpha(root.focusColor, 0.08) : "transparent"
@@ -1091,8 +1095,8 @@ Item {
                                                     Text {
                                                         Layout.fillWidth: true
                                                         textFormat: Text.PlainText
-                                                        text: Model.name(batchRow.modelData.path)
-                                                        color: batchRow.phaseName === "skipped" || batchRow.phaseName === "failed" && !batchRow.modelData.ok ? root.faint : root.fg
+                                                        text: Model.name(batchRow.path)
+                                                        color: batchRow.phaseName === "skipped" || batchRow.phaseName === "failed" && !batchRow.ok ? root.faint : root.fg
                                                         font.family: root.fontFamily
                                                         font.pixelSize: root.px(0.917)
                                                         elide: Text.ElideMiddle
@@ -1101,11 +1105,11 @@ Item {
                                                         Layout.maximumWidth: batchRows.width * 0.48
                                                         textFormat: Text.PlainText
                                                         text: batchRow.phaseName === "working" ? Math.round(service.progress * 100) + "%"
-                                                            : batchRow.phaseName === "done" ? Model.compactSize(batchRow.modelData.bytes) + "  →  " + Model.compactSize(batchRow.modelData.outputBytes)
-                                                            : batchRow.phaseName === "failed" || batchRow.phaseName === "skipped" ? (batchRow.modelData.message || batchRow.phaseName)
+                                                            : batchRow.phaseName === "done" ? Model.compactSize(batchRow.bytes) + "  →  " + Model.compactSize(batchRow.outputBytes)
+                                                            : batchRow.phaseName === "failed" || batchRow.phaseName === "skipped" ? (batchRow.message || batchRow.phaseName)
                                                             : batchRow.phaseName === "stopped" ? "stopped"
                                                             : batchRow.phaseName === "reading" ? "reading…"
-                                                            : Model.compactSize(batchRow.modelData.bytes)
+                                                            : Model.compactSize(batchRow.bytes)
                                                         color: batchRow.phaseName === "failed" ? root.urgent : (batchRow.phaseName === "done" ? root.mist : root.dim)
                                                         font.family: root.fontFamily
                                                         font.pixelSize: root.px(0.833)
