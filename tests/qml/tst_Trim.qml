@@ -1,6 +1,7 @@
 import QtQuick
 import QtTest
 import "../../components" as Components
+import "../../components/ui" as Ui
 
 // TrimBar: range setters mirror to start/end; scrub requests follow the
 // moved handle (debounced noteMove, immediate scrubNow); moveActive
@@ -10,8 +11,11 @@ TestCase {
     width: 600
     height: 400
 
+    Ui.Theme { id: stubTheme }
+
     Components.TrimBar {
         id: trim
+        theme: stubTheme
         duration: 12
         width: 500
     }

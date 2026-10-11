@@ -1,30 +1,20 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
+import "ui"
 import "../services/Model.js" as Model
 
 // Trim timeline for videos with known duration, drawn like an edit track:
 // a tick ruler, the kept range tinted in the selection color, square
 // handles and a playhead at the frame the preview shows. The preview
 // follows the handle being moved (debounced while dragging, immediate on
-// release). Theme colors arrive as properties so the component stays
-// dependency-free and unit-testable; OmaConvert passes the live theme.
+// release). Colours and type come from one Theme object, so the component
+// stays dependency-free and unit-testable; OmaConvert passes the live theme.
 ColumnLayout {
     id: root
+    required property Theme theme
     required property real duration
-    property color trackColor: "#0af8ebe3"
-    property color fillColor: "#819890"
-    property color knobColor: "#e8e8e8"
-    property color knobBorderColor: "#101315"
-    property color lineColor: "#3a4849"
-    property color playheadColor: "#f4e276"
-    property color labelColor: "#a5b5ab"
     property real controlHeight: 36
-    property color textColor: "#cacccc"
-    property color urgentColor: "#a55555"
-    property string fontFamily: "monospace"
-    property int fontSize: 12
-    readonly property color dimColor: Qt.rgba(textColor.r, textColor.g, textColor.b, 0.55)
     property real startTime: 0
     property real endTime: duration
     // Position of the frame the preview currently shows.
@@ -105,9 +95,9 @@ ColumnLayout {
         Text {
             textFormat: Text.PlainText
             text: "IN " + Model.timeText(root.startTime)
-            color: root.labelColor
-            font.family: root.fontFamily
-            font.pixelSize: Math.round(root.fontSize * 0.917)
+            color: root.theme.mist
+            font.family: root.theme.family
+            font.pixelSize: root.theme.px(0.917)
             font.bold: true
         }
         Text {
@@ -116,17 +106,17 @@ ColumnLayout {
             horizontalAlignment: Text.AlignHCenter
             text: Number(Math.max(0, root.endTime - root.startTime)).toFixed(1) + " s of "
                   + Number(root.duration).toFixed(1) + " s"
-            color: root.dimColor
-            font.family: root.fontFamily
-            font.pixelSize: Math.round(root.fontSize * 0.917)
+            color: root.theme.dim
+            font.family: root.theme.family
+            font.pixelSize: root.theme.px(0.917)
             elide: Text.ElideRight
         }
         Text {
             textFormat: Text.PlainText
             text: "OUT " + Model.timeText(root.endTime)
-            color: root.labelColor
-            font.family: root.fontFamily
-            font.pixelSize: Math.round(root.fontSize * 0.917)
+            color: root.theme.mist
+            font.family: root.theme.family
+            font.pixelSize: root.theme.px(0.917)
             font.bold: true
         }
     }
@@ -172,9 +162,9 @@ ColumnLayout {
             x: slider.radius
             width: slider.trackWidth
             height: root.trackHeight
-            color: root.trackColor
+            color: root.theme.surface
             border.width: 1
-            border.color: slider.activeFocus ? root.playheadColor : root.lineColor
+            border.color: slider.activeFocus ? root.theme.focus : root.theme.line
             // Ruler: a tick every 10 px, a taller one every fifth.
             Repeater {
                 model: Math.max(0, Math.floor((track.width - 8) / 10))
@@ -184,7 +174,7 @@ ColumnLayout {
                     width: 1
                     height: index % 5 === 0 ? track.height * 0.46 : track.height * 0.24
                     anchors.verticalCenter: parent.verticalCenter
-                    color: Qt.rgba(root.textColor.r, root.textColor.g, root.textColor.b, 0.14)
+                    color: root.theme.alpha(root.theme.fg, 0.14)
                 }
             }
         }
@@ -193,9 +183,9 @@ ColumnLayout {
             height: root.trackHeight
             x: slider.xFromValue(root.startTime)
             width: Math.max(1, slider.xFromValue(root.endTime) - x)
-            color: Qt.rgba(root.fillColor.r, root.fillColor.g, root.fillColor.b, 0.22)
+            color: root.theme.alpha(root.theme.sage, 0.22)
             border.width: 1
-            border.color: root.fillColor
+            border.color: root.theme.sage
         }
         Rectangle {
             visible: root.playhead > root.startTime && root.playhead < root.endTime
@@ -203,7 +193,7 @@ ColumnLayout {
             width: 1
             height: root.trackHeight + 6
             x: slider.xFromValue(root.playhead)
-            color: root.playheadColor
+            color: root.theme.focus
         }
         // Square handles, taller than the track; the active one glows.
         Repeater {
@@ -217,7 +207,7 @@ ColumnLayout {
                 height: root.trackHeight + 8
                 anchors.verticalCenter: parent.verticalCenter
                 x: slider.xFromValue(handle.modelData === "first" ? root.startTime : root.endTime) - width / 2
-                color: handle.active ? root.playheadColor : root.knobColor
+                color: handle.active ? root.theme.focus : root.theme.fg
             }
         }
         MouseArea {
@@ -251,9 +241,9 @@ ColumnLayout {
         Layout.fillWidth: true
         visible: !root.valid
         text: "Pick an interval of at least 0.1 seconds."
-        color: root.urgentColor
-        font.family: root.fontFamily
-        font.pixelSize: Math.round(root.fontSize * 0.917)
+        color: root.theme.urgent
+        font.family: root.theme.family
+        font.pixelSize: root.theme.px(0.917)
         wrapMode: Text.WordWrap
     }
 }

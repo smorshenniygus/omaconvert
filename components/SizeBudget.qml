@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
+import "ui"
 import "../services/Model.js" as Model
 
 // Size budget: how a size compares with the limit. Before converting it
@@ -11,15 +12,11 @@ import "../services/Model.js" as Model
 // recipes never moves the layout.
 ColumnLayout {
     id: root
+    required property Theme theme
     property real fromBytes: 0
     property real limitBytes: 0
     // > 0 after converting: the measured result.
     property real resultBytes: 0
-    property color foreground: "#cacccc"
-    property color fillColor: "#819890"
-    property color limitColor: "#f4e276"
-    property string fontFamily: "monospace"
-    property int fontSize: 12
     readonly property bool done: root.resultBytes > 0
     readonly property real span: Math.max(root.fromBytes, root.limitBytes, root.resultBytes, 1)
     spacing: 6
@@ -31,24 +28,24 @@ ColumnLayout {
         Text {
             textFormat: Text.PlainText
             text: Model.compactSize(root.fromBytes)
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Math.round(root.fontSize * 1.333)
+            color: root.theme.fg
+            font.family: root.theme.family
+            font.pixelSize: root.theme.px(1.333)
             font.bold: true
         }
         Text {
             textFormat: Text.PlainText
             text: "→"
-            color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.32)
-            font.family: root.fontFamily
-            font.pixelSize: Math.round(root.fontSize * 1.167)
+            color: root.theme.alpha(root.theme.fg, 0.32)
+            font.family: root.theme.family
+            font.pixelSize: root.theme.px(1.167)
         }
         Text {
             textFormat: Text.PlainText
             text: root.limitBytes > 0 ? "≤ " + Model.sizeLabel(root.limitBytes) : "no size limit"
-            color: root.limitBytes > 0 ? root.limitColor : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.55)
-            font.family: root.fontFamily
-            font.pixelSize: Math.round(root.fontSize * 1.333)
+            color: root.limitBytes > 0 ? root.theme.focus : root.theme.alpha(root.theme.fg, 0.55)
+            font.family: root.theme.family
+            font.pixelSize: root.theme.px(1.333)
             font.bold: true
         }
         Item { Layout.fillWidth: true }
@@ -58,9 +55,9 @@ ColumnLayout {
                 : (root.fromBytes > root.limitBytes
                    ? "−" + Math.ceil((1 - root.limitBytes / root.fromBytes) * 100) + "% to cut"
                    : "already fits")
-            color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.55)
-            font.family: root.fontFamily
-            font.pixelSize: Math.round(root.fontSize * 0.917)
+            color: root.theme.alpha(root.theme.fg, 0.55)
+            font.family: root.theme.family
+            font.pixelSize: root.theme.px(0.917)
         }
     }
     Item {
@@ -70,14 +67,14 @@ ColumnLayout {
             anchors.verticalCenter: parent.verticalCenter
             width: parent.width
             height: 8
-            color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
+            color: root.theme.alpha(root.theme.fg, 0.08)
         }
         Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             height: 8
             width: root.limitBytes > 0 || root.done
                 ? parent.width * Math.min(1, (root.done ? root.resultBytes : Math.min(root.fromBytes, root.limitBytes)) / root.span) : 0
-            color: root.fillColor
+            color: root.theme.sage
             Behavior on width { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
         }
         Rectangle {
@@ -86,7 +83,7 @@ ColumnLayout {
             x: Math.min(parent.width - width, parent.width * root.limitBytes / root.span)
             width: 2
             height: 14
-            color: root.limitColor
+            color: root.theme.focus
         }
     }
 }

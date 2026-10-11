@@ -1,6 +1,7 @@
 import QtQuick
 import QtTest
 import "../../components" as Components
+import "../../components/ui" as Ui
 
 // Segments never assigns `value`, so the caller's binding survives clicks:
 // two groups sharing one format (video MP4 / image PNG) keep exactly one
@@ -15,15 +16,19 @@ TestCase {
 
     property string formatValue: "mp4"
 
+    Ui.Theme { id: stubTheme }
+
     Column {
         Components.Segments {
             id: video
+            theme: stubTheme
             options: ["gif", "mp4", "webm"]
             value: options.indexOf(formatValue) >= 0 ? formatValue : ""
             onChanged: v => formatValue = v
         }
         Components.Segments {
             id: image
+            theme: stubTheme
             options: ["png", "jpg", "webp"]
             value: options.indexOf(formatValue) >= 0 ? formatValue : ""
             onChanged: v => formatValue = v

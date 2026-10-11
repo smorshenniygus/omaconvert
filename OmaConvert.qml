@@ -944,10 +944,7 @@ Item {
                             overlayDot: root.theme.urgent
                             badgeText: service.metadata ? (root.inputKind === "image" ? Model.dimensionsText(service.metadata.width, service.metadata.height)
                                 : Math.min(service.metadata.width, service.metadata.height) + "p" + (Model.isHdr(service.metadata) ? "  ·  HDR" : "")) : ""
-                            foreground: root.theme.fg
-                            background: root.theme.bg
-                            fontFamily: root.theme.family
-                            fontSize: root.theme.body
+                            theme: root.theme
                             Behavior on boxHeight { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
                         }
                         TrimBar {
@@ -955,17 +952,7 @@ Item {
                             Layout.fillWidth: true
                             visible: root.trimShown && root.idleWithFile
                             duration: (service.metadata && service.metadata.duration) || 0
-                            trackColor: root.theme.surface
-                            fillColor: root.theme.sage
-                            knobColor: root.theme.fg
-                            knobBorderColor: root.theme.bg
-                            lineColor: root.theme.line
-                            playheadColor: root.theme.focus
-                            labelColor: root.theme.mist
-                            textColor: root.theme.fg
-                            urgentColor: root.theme.urgent
-                            fontFamily: root.theme.family
-                            fontSize: root.theme.body
+                            theme: root.theme
                             controlHeight: root.spacing.controlHeight
                             onScrubRequested: (position, draft) => {
                                 if (service.inputPath) preview.requestSource(service.inputPath, position, draft, service.metadata)
@@ -978,11 +965,7 @@ Item {
                             visible: root.idleWithFile && !service.isBatch && (service.metadata.bytes || 0) > 0
                             fromBytes: (service.metadata && service.metadata.bytes) || 0
                             limitBytes: root.activeLimit
-                            foreground: root.theme.fg
-                            fillColor: root.theme.sage
-                            limitColor: root.theme.focus
-                            fontFamily: root.theme.family
-                            fontSize: root.theme.body
+                            theme: root.theme
                         }
 
                         // ── Command line, recipes, all settings ──────────
@@ -1252,11 +1235,7 @@ Item {
                                                     required property var modelData
                                                     options: formatGroup.modelData.items.map(item => ({ value: item, label: item === Model.SEQUENCE ? "SEQ" : item.toUpperCase() }))
                                                     value: formatGroup.modelData.items.indexOf(root.formatValue) >= 0 ? root.formatValue : ""
-                                                    foreground: root.theme.fg
-                                                    selectedColor: root.theme.sage
-                                                    focusColor: root.theme.focus
-                                                    fontFamily: root.theme.family
-                                                    fontSize: root.theme.px(0.917)
+                                                    theme: root.theme
                                                     Accessible.name: formatGroup.modelData.title + " formats"
                                                     onChanged: v => { root.formatValue = v; root.syncCommand() }
                                                 }
@@ -1277,11 +1256,7 @@ Item {
                                         Segments {
                                             options: [{ value: "0", label: "target size" }, { value: "1", label: "quick" }]
                                             value: String(root.modeIndex)
-                                            foreground: root.theme.fg
-                                            selectedColor: root.theme.sage
-                                            focusColor: root.theme.focus
-                                            fontFamily: root.theme.family
-                                            fontSize: root.theme.px(0.917)
+                                            theme: root.theme
                                             Accessible.name: "Conversion mode"
                                             onChanged: v => { root.modeIndex = Number(v); root.syncCommand() }
                                         }
@@ -1309,11 +1284,7 @@ Item {
                                             Segments {
                                                 options: ["MB", "KB"]
                                                 value: root.unitText
-                                                foreground: root.theme.fg
-                                                selectedColor: root.theme.sage
-                                                focusColor: root.theme.focus
-                                                fontFamily: root.theme.family
-                                                fontSize: root.theme.px(0.917)
+                                                theme: root.theme
                                                 Accessible.name: "Size unit"
                                                 onChanged: v => { root.unitIndex = v === "KB" ? 1 : 0; root.syncCommand() }
                                             }
@@ -1380,11 +1351,7 @@ Item {
                                         Segments {
                                             options: [{ value: "0", label: "motion" }, { value: "1", label: "balanced" }, { value: "2", label: "detail" }]
                                             value: String(root.preferenceIndex)
-                                            foreground: root.theme.fg
-                                            selectedColor: root.theme.sage
-                                            focusColor: root.theme.focus
-                                            fontFamily: root.theme.family
-                                            fontSize: root.theme.px(0.917)
+                                            theme: root.theme
                                             Accessible.name: "Quality preference"
                                             onChanged: v => { root.preferenceIndex = Number(v); root.syncCommand() }
                                         }
@@ -1405,11 +1372,7 @@ Item {
                                         Segments {
                                             options: [{ value: "0", label: "small" }, { value: "1", label: "balanced" }, { value: "2", label: "high" }]
                                             value: String(root.presetIndex)
-                                            foreground: root.theme.fg
-                                            selectedColor: root.theme.sage
-                                            focusColor: root.theme.focus
-                                            fontFamily: root.theme.family
-                                            fontSize: root.theme.px(0.917)
+                                            theme: root.theme
                                             Accessible.name: "Quality preset"
                                             onChanged: v => { root.presetIndex = Number(v); root.syncCommand() }
                                         }
@@ -1421,11 +1384,7 @@ Item {
                                         Segments {
                                             options: [{ value: "0", label: "every" }, { value: "24", label: "24 fps" }, { value: "10", label: "10 fps" }, { value: "5", label: "5 fps" }, { value: "1", label: "1 fps" }]
                                             value: String(root.sequenceFps)
-                                            foreground: root.theme.fg
-                                            selectedColor: root.theme.sage
-                                            focusColor: root.theme.focus
-                                            fontFamily: root.theme.family
-                                            fontSize: root.theme.px(0.917)
+                                            theme: root.theme
                                             Accessible.name: "Frames per second to keep"
                                             onChanged: v => { root.sequenceFps = Number(v); root.syncCommand() }
                                         }
@@ -1598,10 +1557,7 @@ Item {
                                 dimmed: 0.55
                                 imageSource: preview.sourceUrl
                                 loading: preview.sourceLoading
-                                foreground: root.theme.fg
-                                background: root.theme.bg
-                                fontFamily: root.theme.family
-                                fontSize: root.theme.body
+                                theme: root.theme
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true
@@ -1786,13 +1742,7 @@ Item {
                             resultMeta: service.result ? Model.dimensionsText(service.result.width, service.result.height) + "  ·  " + Model.compactSize(service.result.bytes) : ""
                             sourceBytes: (service.metadata && service.metadata.bytes) || 0
                             limitBytes: root.jobLimitBytes
-                            foreground: root.theme.fg
-                            background: root.theme.bg
-                            accent: root.theme.sage
-                            okColor: root.theme.mist
-                            limitColor: root.theme.focus
-                            fontFamily: root.theme.family
-                            fontSize: root.theme.body
+                            theme: root.theme
                         }
                         // Batch summary: the sizes before and after, what failed.
                         ColumnLayout {
