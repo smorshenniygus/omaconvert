@@ -10,6 +10,7 @@ import qs.Ui as Ui
 import "services"
 import "services/Model.js" as Model
 import "components"
+import "components/ui"
 import qs.Commons as Commons
 
 Item {
@@ -46,20 +47,21 @@ Item {
     // kept a cached interface after `omarchy plugin update`.
     readonly property bool staleInterface: service.backendVersion !== "" && service.backendVersion !== root.appVersion
     // Palette: theme roles only, so every Omarchy theme dresses the panel.
-    readonly property color fg: root.menuTheme.text
-    readonly property color bg: root.menuTheme.background
-    readonly property color accent: Commons.Color.accent
-    readonly property color urgent: Commons.Color.urgent
-    readonly property color dim: root.alpha(root.fg, 0.55)
-    readonly property color faint: root.alpha(root.fg, 0.32)
-    readonly property color line: root.alpha(root.fg, 0.16)
-    readonly property color surface: root.alpha(root.fg, 0.04)
-    readonly property color sage: Style.selectedStateColor(root.fg, root.accent, root.urgent)
-    readonly property color mist: Style.hoverStateColor(root.fg, root.accent, root.urgent)
-    readonly property color focusColor: Style.focusStateColor(root.fg, root.accent, root.urgent)
-    readonly property string fontFamily: root.fonts.menuFamily
-    function alpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
-    function px(k) { return Math.round(root.fonts.body * k) }
+    // Components get it as one `theme` property.
+    readonly property Theme theme: Theme {
+        fg: root.menuTheme.text
+        bg: root.menuTheme.background
+        accent: Commons.Color.accent
+        urgent: Commons.Color.urgent
+        sage: Style.selectedStateColor(root.menuTheme.text, Commons.Color.accent, Commons.Color.urgent)
+        mist: Style.hoverStateColor(root.menuTheme.text, Commons.Color.accent, Commons.Color.urgent)
+        focus: Style.focusStateColor(root.menuTheme.text, Commons.Color.accent, Commons.Color.urgent)
+        family: root.fonts.menuFamily
+        iconFamily: root.fonts.family
+        body: root.fonts.body
+        bodySmall: root.fonts.bodySmall
+        caption: root.fonts.caption
+    }
     // Form state (persisted through Settings aliases below).
     property string formatValue: ""
     property int modeIndex: 0
@@ -464,237 +466,6 @@ Item {
         // qmllint enable signal-handler-parameters
     }
 
-    // ── Building blocks (terminal idiom: square, 1 px lines, mono) ─────────
-    component SectionLabel: Text {
-        readonly property var fontTokens: Style.font
-        textFormat: Text.PlainText
-        color: root.faint
-        font.family: fontTokens.menuFamily
-        font.pixelSize: Math.round(fontTokens.body * 0.833)
-        font.bold: true
-        font.letterSpacing: 2
-    }
-    component Hint: Text {
-        readonly property var fontTokens: Style.font
-        textFormat: Text.PlainText
-        Layout.fillWidth: true
-        color: root.dim
-        font.family: fontTokens.menuFamily
-        font.pixelSize: fontTokens.caption
-        wrapMode: Text.WordWrap
-    }
-    component ActionButton: Ui.Button {
-        readonly property var menuTheme: Commons.Color.menu
-        readonly property var fontTokens: Style.font
-        bordered: true
-        focusable: true
-        foreground: menuTheme.text
-        accent: Commons.Color.accent
-        fontFamily: fontTokens.menuFamily
-        opacity: enabled ? 1 : 0.4
-    }
-    // Small bordered text button: "change", "×", "esc cancel".
-    component TextButton: Rectangle {
-        id: tb
-        property string key: ""
-        property string label: ""
-        signal clicked()
-        implicitWidth: tbRow.implicitWidth + 18
-        implicitHeight: tbRow.implicitHeight + 8
-        color: tbMouse.containsMouse ? root.alpha(root.fg, 0.06) : "transparent"
-        border.width: 1
-        border.color: tb.activeFocus ? root.focusColor : root.alpha(root.fg, 0.3)
-        opacity: enabled ? 1 : 0.4
-        activeFocusOnTab: enabled
-        Accessible.role: Accessible.Button
-        Accessible.name: tb.label
-        Keys.onReturnPressed: tb.clicked()
-        Keys.onEnterPressed: tb.clicked()
-        Keys.onSpacePressed: tb.clicked()
-        Row {
-            id: tbRow
-            anchors.centerIn: parent
-            spacing: 6
-            Text {
-                visible: tb.key !== ""
-                textFormat: Text.PlainText
-                text: tb.key
-                color: root.focusColor
-                font.family: root.fontFamily
-                font.pixelSize: root.px(0.917)
-                font.bold: true
-            }
-            Text {
-                textFormat: Text.PlainText
-                text: tb.label
-                color: root.fg
-                font.family: root.fontFamily
-                font.pixelSize: root.px(0.917)
-            }
-        }
-        MouseArea {
-            id: tbMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: tb.clicked()
-        }
-    }
-    // One setting: label column on the left, controls on the right.
-    component FieldRow: Rectangle {
-        id: fieldRow
-        property string label: ""
-        default property alias controls: fieldControls.data
-        Layout.fillWidth: true
-        implicitHeight: fieldLayout.implicitHeight + 14
-        color: "transparent"
-        opacity: enabled ? 1 : 0.38
-        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.line }
-        RowLayout {
-            id: fieldLayout
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin: 14
-            anchors.rightMargin: 14
-            spacing: 12
-            SectionLabel {
-                Layout.preferredWidth: 84
-                Layout.alignment: Qt.AlignTop
-                Layout.topMargin: 5
-                text: fieldRow.label
-                font.letterSpacing: 1.5
-            }
-            ColumnLayout {
-                id: fieldControls
-                Layout.fillWidth: true
-                // Without a filling child the column would shrink to its
-                // content and float to the middle of the row.
-                Layout.maximumWidth: Number.POSITIVE_INFINITY
-                spacing: 5
-            }
-        }
-    }
-    // Checkbox row: square mark + label; Space or a click toggles.
-    component CheckRow: Rectangle {
-        id: check
-        property bool checked: false
-        property string label: ""
-        property string detail: ""
-        signal toggled()
-        Layout.fillWidth: true
-        implicitHeight: checkRow.implicitHeight + 12
-        color: checkMouse.containsMouse ? root.surface : "transparent"
-        activeFocusOnTab: true
-        Accessible.role: Accessible.CheckBox
-        Accessible.name: check.label
-        Accessible.checked: check.checked
-        Keys.onSpacePressed: check.toggled()
-        Keys.onReturnPressed: check.toggled()
-        Keys.onEnterPressed: check.toggled()
-        RowLayout {
-            id: checkRow
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin: 4
-            spacing: 10
-            Rectangle {
-                Layout.preferredWidth: 12
-                Layout.preferredHeight: 12
-                color: check.checked ? root.sage : "transparent"
-                border.width: 1
-                border.color: check.activeFocus ? root.focusColor : (check.checked ? root.sage : root.alpha(root.fg, 0.4))
-            }
-            Text {
-                textFormat: Text.PlainText
-                text: check.label
-                color: check.checked ? root.fg : root.dim
-                font.family: root.fontFamily
-                font.pixelSize: root.px(1)
-                font.bold: check.checked
-            }
-            Text {
-                textFormat: Text.PlainText
-                visible: text !== ""
-                text: check.detail
-                color: root.focusColor
-                font.family: root.fontFamily
-                font.pixelSize: root.px(1)
-                font.bold: true
-            }
-            Item { Layout.fillWidth: true }
-        }
-        MouseArea {
-            id: checkMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: { check.forceActiveFocus(); check.toggled() }
-        }
-    }
-    // Result action: icon, label, key on the right; the first one is primary.
-    component ActionRow: Rectangle {
-        id: act
-        property string glyph: ""
-        property string label: ""
-        property string key: ""
-        property bool primary: false
-        signal triggered()
-        Layout.fillWidth: true
-        implicitHeight: actRow.implicitHeight + 20
-        color: act.primary ? root.alpha(root.focusColor, 0.08) : (actMouse.containsMouse ? root.surface : "transparent")
-        activeFocusOnTab: true
-        Accessible.role: Accessible.Button
-        Accessible.name: act.label
-        // Enter on a focused action runs it: without this the window's
-        // Enter shortcut (open the result) wins over Keys.onReturnPressed.
-        Keys.onShortcutOverride: event => event.accepted = event.key === Qt.Key_Return || event.key === Qt.Key_Enter
-        Keys.onReturnPressed: act.triggered()
-        Keys.onEnterPressed: act.triggered()
-        Keys.onSpacePressed: act.triggered()
-        Rectangle { visible: act.primary || act.activeFocus; width: 2; height: parent.height; color: root.focusColor }
-        Rectangle { visible: !act.primary; anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.line }
-        RowLayout {
-            id: actRow
-            anchors.fill: parent
-            anchors.leftMargin: 14
-            anchors.rightMargin: 14
-            spacing: 12
-            Text {
-                text: act.glyph
-                color: act.primary ? root.focusColor : root.mist
-                font.family: root.fonts.family
-                font.pixelSize: root.px(1.167)
-            }
-            Text {
-                textFormat: Text.PlainText
-                Layout.fillWidth: true
-                text: act.label
-                color: root.fg
-                font.family: root.fontFamily
-                font.pixelSize: root.px(1)
-                font.bold: act.primary
-                elide: Text.ElideRight
-            }
-            Text {
-                textFormat: Text.PlainText
-                text: act.key
-                color: act.primary ? root.focusColor : root.faint
-                font.family: root.fontFamily
-                font.pixelSize: root.px(0.917)
-                font.bold: true
-            }
-        }
-        MouseArea {
-            id: actMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: act.triggered()
-        }
-    }
-
     // Quickshell creates FloatingWindow through its runtime platform factory.
     // qmllint disable uncreatable-type
     FloatingWindow {
@@ -704,7 +475,7 @@ Item {
         // Quickshell windows default to visible: keep hidden until open().
         // Otherwise keepLoaded instantiation pops the window at every boot.
         visible: false
-        color: root.bg
+        color: root.theme.bg
         implicitWidth: 560
         implicitHeight: 880
         minimumSize: Qt.size(460, 520)
@@ -722,7 +493,7 @@ Item {
             readonly property real availableWidth: width - 40
             // Own background: identical to the window color, and grabs
             // (screenshots, tests) see the real panel instead of alpha.
-            Rectangle { anchors.fill: parent; color: root.bg }
+            Rectangle { anchors.fill: parent; color: root.theme.bg }
             Keys.onEscapePressed: event => {
                 if (service.busy) service.cancel()
                 else if (root.screen === "settings") root.toggleAdvanced()
@@ -787,7 +558,7 @@ Item {
                     Layout.fillWidth: true
                     implicitHeight: titleRow.implicitHeight + 20
                     color: "transparent"
-                    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.line }
+                    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.theme.line }
                     RowLayout {
                         id: titleRow
                         anchors.fill: parent
@@ -796,24 +567,24 @@ Item {
                         spacing: 10
                         Text {
                             text: "󰕧"
-                            color: root.sage
-                            font.family: root.fonts.family
-                            font.pixelSize: root.px(1.333)
+                            color: root.theme.sage
+                            font.family: root.theme.iconFamily
+                            font.pixelSize: root.theme.px(1.333)
                         }
                         Text {
                             textFormat: Text.PlainText
                             text: "omaconvert"
-                            color: root.fg
-                            font.family: root.fontFamily
-                            font.pixelSize: root.px(1)
+                            color: root.theme.fg
+                            font.family: root.theme.family
+                            font.pixelSize: root.theme.px(1)
                             font.bold: true
                         }
                         Text {
                             textFormat: Text.PlainText
                             text: "v" + root.appVersion
-                            color: root.faint
-                            font.family: root.fontFamily
-                            font.pixelSize: root.px(1)
+                            color: root.theme.faint
+                            font.family: root.theme.family
+                            font.pixelSize: root.theme.px(1)
                             Accessible.name: "OmaConvert version " + root.appVersion
                         }
                         Item { Layout.fillWidth: true }
@@ -821,11 +592,11 @@ Item {
                             readonly property string label: root.screen === "converting" ? "CONVERTING"
                                 : (root.screen === "result" ? "READY"
                                 : (service.metadata ? (root.inputKind === "image" ? "IMAGE" : "VIDEO") : ""))
-                            readonly property color tone: root.screen === "converting" ? root.focusColor : root.mist
+                            readonly property color tone: root.screen === "converting" ? root.theme.focus : root.theme.mist
                             visible: label !== ""
                             implicitWidth: stateText.implicitWidth + 16
                             implicitHeight: stateText.implicitHeight + 4
-                            color: root.alpha(tone, 0.13)
+                            color: root.theme.alpha(tone, 0.13)
                             border.width: 1
                             border.color: tone
                             Text {
@@ -834,8 +605,8 @@ Item {
                                 textFormat: Text.PlainText
                                 text: parent.label
                                 color: parent.tone
-                                font.family: root.fontFamily
-                                font.pixelSize: root.px(0.833)
+                                font.family: root.theme.family
+                                font.pixelSize: root.theme.px(0.833)
                                 font.bold: true
                                 font.letterSpacing: 1.5
                             }
@@ -843,8 +614,8 @@ Item {
                         Ui.PanelActionButton {
                             iconText: "󰅖"
                             tooltipText: "Close  ·  Esc"
-                            foreground: root.fg
-                            hoverColor: root.urgent
+                            foreground: root.theme.fg
+                            hoverColor: root.theme.urgent
                             Accessible.name: "Close OmaConvert"
                             onClicked: root.dismiss()
                         }
@@ -864,7 +635,7 @@ Item {
                         policy: flick.contentHeight > flick.height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
                         contentItem: Rectangle {
                             implicitWidth: 3
-                            color: root.alpha(root.fg, 0.25)
+                            color: root.theme.alpha(root.theme.fg, 0.25)
                         }
                         background: Item {}
                     }
@@ -901,14 +672,14 @@ Item {
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     spacing: 4
-                                    SectionLabel { text: "SOURCE" }
+                                    SectionLabel { theme: root.theme; text: "SOURCE" }
                                     Text {
                                         textFormat: Text.PlainText
                                         Layout.fillWidth: true
                                         text: choose.dragging ? "Drop to open" : Model.name(service.inputPath)
-                                        color: choose.activeFocus ? root.focusColor : root.fg
-                                        font.family: root.fontFamily
-                                        font.pixelSize: root.px(1.5)
+                                        color: choose.activeFocus ? root.theme.focus : root.theme.fg
+                                        font.family: root.theme.family
+                                        font.pixelSize: root.theme.px(1.5)
                                         font.bold: true
                                         elide: Text.ElideMiddle
                                     }
@@ -917,9 +688,9 @@ Item {
                                         Layout.fillWidth: true
                                         text: service.metadata !== null ? Model.mediaDescription(service.metadata)
                                             : (service.busy ? "Reading media…" : "Not read  ·  choose another file")
-                                        color: root.dim
-                                        font.family: root.fontFamily
-                                        font.pixelSize: root.px(0.917)
+                                        color: root.theme.dim
+                                        font.family: root.theme.family
+                                        font.pixelSize: root.theme.px(0.917)
                                         elide: Text.ElideRight
                                     }
                                 }
@@ -928,9 +699,9 @@ Item {
                                     visible: !root.pickerBusy
                                     textFormat: Text.PlainText
                                     text: "change"
-                                    color: choose.hot ? root.fg : root.faint
-                                    font.family: root.fontFamily
-                                    font.pixelSize: root.px(0.917)
+                                    color: choose.hot ? root.theme.fg : root.theme.faint
+                                    font.family: root.theme.family
+                                    font.pixelSize: root.theme.px(0.917)
                                 }
                             }
                             // Empty: one big drop target.
@@ -939,40 +710,40 @@ Item {
                                 visible: service.inputPath === ""
                                 width: parent.width
                                 spacing: 8
-                                SectionLabel { text: "SOURCE" }
+                                SectionLabel { theme: root.theme; text: "SOURCE" }
                                 Rectangle {
                                     Layout.fillWidth: true
                                     implicitHeight: 150
-                                    color: choose.dragging ? root.alpha(root.sage, 0.18)
-                                         : (choose.hot ? root.surface : "transparent")
+                                    color: choose.dragging ? root.theme.alpha(root.theme.sage, 0.18)
+                                         : (choose.hot ? root.theme.surface : "transparent")
                                     border.width: 1
-                                    border.color: choose.activeFocus || choose.dragging ? root.focusColor : root.alpha(root.fg, 0.3)
+                                    border.color: choose.activeFocus || choose.dragging ? root.theme.focus : root.theme.alpha(root.theme.fg, 0.3)
                                     ColumnLayout {
                                         anchors.centerIn: parent
                                         spacing: 8
                                         Text {
                                             Layout.alignment: Qt.AlignHCenter
                                             text: root.pickerBusy ? "󰔟" : "󰇚"
-                                            color: choose.activeFocus ? root.focusColor : root.sage
-                                            font.family: root.fonts.family
-                                            font.pixelSize: root.px(2.333)
+                                            color: choose.activeFocus ? root.theme.focus : root.theme.sage
+                                            font.family: root.theme.iconFamily
+                                            font.pixelSize: root.theme.px(2.333)
                                         }
                                         Text {
                                             Layout.alignment: Qt.AlignHCenter
                                             textFormat: Text.PlainText
                                             text: root.pickerBusy ? "Choosing file…" : (choose.dragging ? "Drop to open" : "Choose a video or image")
-                                            color: root.fg
-                                            font.family: root.fontFamily
-                                            font.pixelSize: root.px(1.167)
+                                            color: root.theme.fg
+                                            font.family: root.theme.family
+                                            font.pixelSize: root.theme.px(1.167)
                                             font.bold: true
                                         }
                                         Text {
                                             Layout.alignment: Qt.AlignHCenter
                                             textFormat: Text.PlainText
                                             text: "⏎ browse  ·  drop a file  ·  ctrl+v paste"
-                                            color: root.faint
-                                            font.family: root.fontFamily
-                                            font.pixelSize: root.px(0.917)
+                                            color: root.theme.faint
+                                            font.family: root.theme.family
+                                            font.pixelSize: root.theme.px(0.917)
                                         }
                                     }
                                 }
@@ -1002,14 +773,14 @@ Item {
                             spacing: 6
                             RowLayout {
                                 Layout.fillWidth: true
-                                SectionLabel { text: "BATCH"; Layout.fillWidth: true }
+                                SectionLabel { theme: root.theme; text: "BATCH"; Layout.fillWidth: true }
                                 Text {
                                     visible: !service.busy && !service.result
                                     textFormat: Text.PlainText
                                     text: "change"
-                                    color: batchChange.containsMouse ? root.fg : root.faint
-                                    font.family: root.fontFamily
-                                    font.pixelSize: root.px(0.917)
+                                    color: batchChange.containsMouse ? root.theme.fg : root.theme.faint
+                                    font.family: root.theme.family
+                                    font.pixelSize: root.theme.px(0.917)
                                     MouseArea {
                                         id: batchChange
                                         anchors.fill: parent
@@ -1024,9 +795,9 @@ Item {
                                 Layout.fillWidth: true
                                 text: root.batchReady.length ? root.batchTitle()
                                     : (service.busy ? "Reading " + service.batch.length + " files…" : "None of these files can be read")
-                                color: root.fg
-                                font.family: root.fontFamily
-                                font.pixelSize: root.px(1.5)
+                                color: root.theme.fg
+                                font.family: root.theme.family
+                                font.pixelSize: root.theme.px(1.5)
                                 font.bold: true
                             }
                             Text {
@@ -1035,9 +806,9 @@ Item {
                                 // Always one line tall, so recipes do not move.
                                 text: (root.idleWithFile ? "each file  →  " + (root.activeLimit > 0 ? "≤ " + Model.sizeLabel(root.activeLimit) : "quality preset") : "")
                                     + (root.batchNote() ? (root.idleWithFile ? "  ·  " : "") + root.batchNote() : "") || " "
-                                color: root.dim
-                                font.family: root.fontFamily
-                                font.pixelSize: root.px(0.917)
+                                color: root.theme.dim
+                                font.family: root.theme.family
+                                font.pixelSize: root.theme.px(0.917)
                                 elide: Text.ElideRight
                             }
                             Rectangle {
@@ -1045,7 +816,7 @@ Item {
                                 implicitHeight: Math.min(batchRows.implicitHeight, 8 * 30) + 2
                                 color: "transparent"
                                 border.width: 1
-                                border.color: root.line
+                                border.color: root.theme.line
                                 clip: true
                                 Flickable {
                                     id: batchFlick
@@ -1074,31 +845,31 @@ Item {
                                                 readonly property string phaseName: batchRow.status || "reading"
                                                 width: batchRows.width
                                                 height: 30
-                                                color: batchRow.phaseName === "working" ? root.alpha(root.focusColor, 0.08) : "transparent"
-                                                Rectangle { visible: batchRow.phaseName === "working"; width: 2; height: parent.height; color: root.focusColor }
-                                                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.alpha(root.fg, 0.06) }
+                                                color: batchRow.phaseName === "working" ? root.theme.alpha(root.theme.focus, 0.08) : "transparent"
+                                                Rectangle { visible: batchRow.phaseName === "working"; width: 2; height: parent.height; color: root.theme.focus }
+                                                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.theme.alpha(root.theme.fg, 0.06) }
                                                 RowLayout {
                                                     anchors.fill: parent
                                                     anchors.leftMargin: 12
                                                     anchors.rightMargin: 12
                                                     spacing: 10
                                                     Text {
-                                                        Layout.preferredWidth: root.px(1)
+                                                        Layout.preferredWidth: root.theme.px(1)
                                                         textFormat: Text.PlainText
                                                         text: ({ reading: "…", queued: "·", working: "▸", done: "✓", failed: "✗", skipped: "–", stopped: "■" })[batchRow.phaseName] || "·"
-                                                        color: batchRow.phaseName === "done" ? root.mist : (batchRow.phaseName === "failed" ? root.urgent
-                                                             : (batchRow.phaseName === "working" ? root.focusColor : root.faint))
-                                                        font.family: root.fontFamily
-                                                        font.pixelSize: root.px(1)
+                                                        color: batchRow.phaseName === "done" ? root.theme.mist : (batchRow.phaseName === "failed" ? root.theme.urgent
+                                                             : (batchRow.phaseName === "working" ? root.theme.focus : root.theme.faint))
+                                                        font.family: root.theme.family
+                                                        font.pixelSize: root.theme.px(1)
                                                         font.bold: true
                                                     }
                                                     Text {
                                                         Layout.fillWidth: true
                                                         textFormat: Text.PlainText
                                                         text: Model.name(batchRow.path)
-                                                        color: batchRow.phaseName === "skipped" || batchRow.phaseName === "failed" && !batchRow.ok ? root.faint : root.fg
-                                                        font.family: root.fontFamily
-                                                        font.pixelSize: root.px(0.917)
+                                                        color: batchRow.phaseName === "skipped" || batchRow.phaseName === "failed" && !batchRow.ok ? root.theme.faint : root.theme.fg
+                                                        font.family: root.theme.family
+                                                        font.pixelSize: root.theme.px(0.917)
                                                         elide: Text.ElideMiddle
                                                     }
                                                     Text {
@@ -1110,9 +881,9 @@ Item {
                                                             : batchRow.phaseName === "stopped" ? "stopped"
                                                             : batchRow.phaseName === "reading" ? "reading…"
                                                             : Model.compactSize(batchRow.bytes)
-                                                        color: batchRow.phaseName === "failed" ? root.urgent : (batchRow.phaseName === "done" ? root.mist : root.dim)
-                                                        font.family: root.fontFamily
-                                                        font.pixelSize: root.px(0.833)
+                                                        color: batchRow.phaseName === "failed" ? root.theme.urgent : (batchRow.phaseName === "done" ? root.theme.mist : root.theme.dim)
+                                                        font.family: root.theme.family
+                                                        font.pixelSize: root.theme.px(0.833)
                                                         elide: Text.ElideRight
                                                     }
                                                 }
@@ -1128,14 +899,16 @@ Item {
                             Layout.fillWidth: true
                             visible: !service.inputPath && !service.result
                             spacing: 2
-                            SectionLabel { text: "OMARCHY"; Layout.bottomMargin: 4 }
+                            SectionLabel { theme: root.theme; text: "OMARCHY"; Layout.bottomMargin: 4 }
                             CheckRow {
+                                theme: root.theme
                                 visible: service.openWith !== null
                                 checked: !!(service.openWith && service.openWith.enabled)
                                 label: "Show in Open With and app search"
                                 onToggled: service.setOpenWith(!checked)
                             }
                             CheckRow {
+                                theme: root.theme
                                 visible: !!(service.hotkey && service.hotkey.available && (service.hotkey.enabled || service.hotkey.free))
                                 checked: !!(service.hotkey && service.hotkey.enabled)
                                 label: "Hotkey"
@@ -1143,15 +916,17 @@ Item {
                                 onToggled: service.setHotkey(!checked)
                             }
                             CheckRow {
+                                theme: root.theme
                                 checked: prefs.offerRecordings
                                 label: "Offer to shrink screen recordings over 10 MB"
                                 onToggled: prefs.offerRecordings = !prefs.offerRecordings
                             }
                             Hint {
+                                theme: root.theme
                                 Layout.topMargin: 4
                                 text: service.openWithError || service.hotkeyError
                                     || "The hotkey is a marked line in ~/.config/hypr/bindings.lua. A recording over 10 MB gets a notification that opens it here."
-                                color: service.openWithError || service.hotkeyError ? root.urgent : root.faint
+                                color: service.openWithError || service.hotkeyError ? root.theme.urgent : root.theme.faint
                             }
                         }
 
@@ -1166,13 +941,13 @@ Item {
                             imageSource: preview.sourceUrl
                             loading: preview.sourceLoading
                             overlayText: root.trimShown ? Model.timeText(trimBar.playhead) : ""
-                            overlayDot: root.urgent
+                            overlayDot: root.theme.urgent
                             badgeText: service.metadata ? (root.inputKind === "image" ? Model.dimensionsText(service.metadata.width, service.metadata.height)
                                 : Math.min(service.metadata.width, service.metadata.height) + "p" + (Model.isHdr(service.metadata) ? "  ·  HDR" : "")) : ""
-                            foreground: root.fg
-                            background: root.bg
-                            fontFamily: root.fontFamily
-                            fontSize: root.fonts.body
+                            foreground: root.theme.fg
+                            background: root.theme.bg
+                            fontFamily: root.theme.family
+                            fontSize: root.theme.body
                             Behavior on boxHeight { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
                         }
                         TrimBar {
@@ -1180,17 +955,17 @@ Item {
                             Layout.fillWidth: true
                             visible: root.trimShown && root.idleWithFile
                             duration: (service.metadata && service.metadata.duration) || 0
-                            trackColor: root.surface
-                            fillColor: root.sage
-                            knobColor: root.fg
-                            knobBorderColor: root.bg
-                            lineColor: root.line
-                            playheadColor: root.focusColor
-                            labelColor: root.mist
-                            textColor: root.fg
-                            urgentColor: root.urgent
-                            fontFamily: root.fontFamily
-                            fontSize: root.fonts.body
+                            trackColor: root.theme.surface
+                            fillColor: root.theme.sage
+                            knobColor: root.theme.fg
+                            knobBorderColor: root.theme.bg
+                            lineColor: root.theme.line
+                            playheadColor: root.theme.focus
+                            labelColor: root.theme.mist
+                            textColor: root.theme.fg
+                            urgentColor: root.theme.urgent
+                            fontFamily: root.theme.family
+                            fontSize: root.theme.body
                             controlHeight: root.spacing.controlHeight
                             onScrubRequested: (position, draft) => {
                                 if (service.inputPath) preview.requestSource(service.inputPath, position, draft, service.metadata)
@@ -1203,11 +978,11 @@ Item {
                             visible: root.idleWithFile && !service.isBatch && (service.metadata.bytes || 0) > 0
                             fromBytes: (service.metadata && service.metadata.bytes) || 0
                             limitBytes: root.activeLimit
-                            foreground: root.fg
-                            fillColor: root.sage
-                            limitColor: root.focusColor
-                            fontFamily: root.fontFamily
-                            fontSize: root.fonts.body
+                            foreground: root.theme.fg
+                            fillColor: root.theme.sage
+                            limitColor: root.theme.focus
+                            fontFamily: root.theme.family
+                            fontSize: root.theme.body
                         }
 
                         // ── Command line, recipes, all settings ──────────
@@ -1225,11 +1000,11 @@ Item {
                                 Ui.TextField {
                                     id: commandInput
                                     Layout.fillWidth: true
-                                    foreground: root.fg
-                                    accent: root.accent
-                                    horizontalPadding: root.spacing.controlPaddingX + root.px(1.5)
-                                    font.family: root.fontFamily
-                                    font.pixelSize: root.px(1.167)
+                                    foreground: root.theme.fg
+                                    accent: root.theme.accent
+                                    horizontalPadding: root.spacing.controlPaddingX + root.theme.px(1.5)
+                                    font.family: root.theme.family
+                                    font.pixelSize: root.theme.px(1.167)
                                     font.bold: true
                                     selectByMouse: true
                                     placeholderText: root.inputKind === "image" ? "webp  ·  png 500kb  ·  jpg" : "gif 30mb  ·  mp4 quick  ·  png frames 10fps"
@@ -1253,9 +1028,9 @@ Item {
                                         anchors.leftMargin: root.spacing.controlPaddingX
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: "❯"
-                                        color: commandInput.activeFocus ? root.focusColor : root.faint
-                                        font.family: root.fontFamily
-                                        font.pixelSize: root.px(1.167)
+                                        color: commandInput.activeFocus ? root.theme.focus : root.theme.faint
+                                        font.family: root.theme.family
+                                        font.pixelSize: root.theme.px(1.167)
                                         font.bold: true
                                     }
                                 }
@@ -1264,10 +1039,10 @@ Item {
                                     id: settingsButton
                                     Layout.preferredWidth: commandInput.height
                                     Layout.preferredHeight: commandInput.height
-                                    color: root.advanced ? root.alpha(root.focusColor, 0.2)
-                                         : (settingsMouse.containsMouse ? root.alpha(root.fg, 0.08) : root.surface)
+                                    color: root.advanced ? root.theme.alpha(root.theme.focus, 0.2)
+                                         : (settingsMouse.containsMouse ? root.theme.alpha(root.theme.fg, 0.08) : root.theme.surface)
                                     border.width: 1
-                                    border.color: root.advanced || settingsButton.activeFocus ? root.focusColor : root.alpha(root.fg, 0.3)
+                                    border.color: root.advanced || settingsButton.activeFocus ? root.theme.focus : root.theme.alpha(root.theme.fg, 0.3)
                                     activeFocusOnTab: true
                                     Accessible.role: Accessible.Button
                                     Accessible.name: root.advanced ? "Back to recipes" : "All settings"
@@ -1277,9 +1052,9 @@ Item {
                                     Text {
                                         anchors.centerIn: parent
                                         text: root.advanced ? "󰅃" : "󰒓"
-                                        color: root.advanced ? root.focusColor : root.fg
-                                        font.family: root.fonts.family
-                                        font.pixelSize: root.px(1.25)
+                                        color: root.advanced ? root.theme.focus : root.theme.fg
+                                        font.family: root.theme.iconFamily
+                                        font.pixelSize: root.theme.px(1.25)
                                     }
                                     MouseArea {
                                         id: settingsMouse
@@ -1302,9 +1077,9 @@ Item {
                                     textFormat: Text.PlainText
                                     text: root.matched.chips.length > 0 ? "understood"
                                         : (root.inputKind === "image" ? "type a format and size  ·  jpg 200kb  ·  webp" : "type a format and size  ·  gif 10mb  ·  mp4 quick")
-                                    color: root.faint
-                                    font.family: root.fontFamily
-                                    font.pixelSize: root.px(0.833)
+                                    color: root.theme.faint
+                                    font.family: root.theme.family
+                                    font.pixelSize: root.theme.px(0.833)
                                     height: 20
                                     verticalAlignment: Text.AlignVCenter
                                 }
@@ -1315,17 +1090,17 @@ Item {
                                         required property var modelData
                                         implicitWidth: chipText.implicitWidth + 14
                                         implicitHeight: 20
-                                        color: chip.modelData.ok ? root.alpha(root.sage, 0.18) : "transparent"
+                                        color: chip.modelData.ok ? root.theme.alpha(root.theme.sage, 0.18) : "transparent"
                                         border.width: 1
-                                        border.color: chip.modelData.ok ? root.alpha(root.sage, 0.56) : root.line
+                                        border.color: chip.modelData.ok ? root.theme.alpha(root.theme.sage, 0.56) : root.theme.line
                                         Text {
                                             id: chipText
                                             anchors.centerIn: parent
                                             textFormat: Text.PlainText
                                             text: chip.modelData.text
-                                            color: chip.modelData.ok ? root.mist : root.faint
-                                            font.family: root.fontFamily
-                                            font.pixelSize: root.px(0.833)
+                                            color: chip.modelData.ok ? root.theme.mist : root.theme.faint
+                                            font.family: root.theme.family
+                                            font.pixelSize: root.theme.px(0.833)
                                             font.strikeout: !chip.modelData.ok
                                         }
                                     }
@@ -1349,12 +1124,12 @@ Item {
                                         readonly property string note: Model.recipeNote(recipeRow.modelData.fields, root.inputKind, root.convertSeconds)
                                         Layout.fillWidth: true
                                         implicitHeight: recipeLine.implicitHeight + 18
-                                        color: recipeRow.current ? root.alpha(root.focusColor, 0.08)
-                                             : (recipeMouse.containsMouse ? root.surface : "transparent")
+                                        color: recipeRow.current ? root.theme.alpha(root.theme.focus, 0.08)
+                                             : (recipeMouse.containsMouse ? root.theme.surface : "transparent")
                                         Accessible.role: Accessible.Button
                                         Accessible.name: recipeRow.modelData.title + ". " + (recipeRow.modelData.problem || recipeRow.detail)
-                                        Rectangle { visible: recipeRow.current; width: 2; height: parent.height; color: root.focusColor }
-                                        Rectangle { visible: !recipeRow.current; anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.line }
+                                        Rectangle { visible: recipeRow.current; width: 2; height: parent.height; color: root.theme.focus }
+                                        Rectangle { visible: !recipeRow.current; anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.theme.line }
                                         RowLayout {
                                             id: recipeLine
                                             anchors.left: parent.left
@@ -1366,18 +1141,18 @@ Item {
                                             Text {
                                                 textFormat: Text.PlainText
                                                 text: recipeRow.index < 9 ? String(recipeRow.index + 1) : ""
-                                                color: recipeRow.current ? root.focusColor : root.faint
-                                                font.family: root.fontFamily
-                                                font.pixelSize: root.px(0.917)
+                                                color: recipeRow.current ? root.theme.focus : root.theme.faint
+                                                font.family: root.theme.family
+                                                font.pixelSize: root.theme.px(0.917)
                                                 font.bold: true
                                             }
                                             Text {
                                                 textFormat: Text.PlainText
-                                                Layout.preferredWidth: root.px(3.5)
+                                                Layout.preferredWidth: root.theme.px(3.5)
                                                 text: (recipeRow.modelData.fields.format === Model.SEQUENCE ? "SEQ" : recipeRow.modelData.fields.format).toUpperCase()
-                                                color: root.mist
-                                                font.family: root.fontFamily
-                                                font.pixelSize: root.px(0.833)
+                                                color: root.theme.mist
+                                                font.family: root.theme.family
+                                                font.pixelSize: root.theme.px(0.833)
                                                 font.bold: true
                                                 font.letterSpacing: 1
                                             }
@@ -1388,10 +1163,10 @@ Item {
                                                     textFormat: Text.PlainText
                                                     Layout.fillWidth: true
                                                     text: recipeRow.modelData.title
-                                                    color: root.fg
+                                                    color: root.theme.fg
                                                     opacity: recipeRow.blocked ? 0.5 : 1
-                                                    font.family: root.fontFamily
-                                                    font.pixelSize: root.px(1.083)
+                                                    font.family: root.theme.family
+                                                    font.pixelSize: root.theme.px(1.083)
                                                     font.bold: true
                                                     elide: Text.ElideRight
                                                 }
@@ -1399,9 +1174,9 @@ Item {
                                                     textFormat: Text.PlainText
                                                     Layout.fillWidth: true
                                                     text: recipeRow.modelData.problem || recipeRow.note || recipeRow.detail
-                                                    color: recipeRow.blocked ? root.urgent : (recipeRow.note ? root.fg : root.dim)
-                                                    font.family: root.fontFamily
-                                                    font.pixelSize: root.px(0.833)
+                                                    color: recipeRow.blocked ? root.theme.urgent : (recipeRow.note ? root.theme.fg : root.theme.dim)
+                                                    font.family: root.theme.family
+                                                    font.pixelSize: root.theme.px(0.833)
                                                     wrapMode: Text.WordWrap
                                                 }
                                             }
@@ -1409,17 +1184,17 @@ Item {
                                                 textFormat: Text.PlainText
                                                 text: recipeRow.modelData.pinned ? "★ pinned" : (recipeRow.modelData.last ? "last used" : (recipeRow.modelData.custom ? "as typed" : ""))
                                                 visible: text !== ""
-                                                color: recipeRow.current ? root.fg : root.faint
-                                                font.family: root.fontFamily
-                                                font.pixelSize: root.px(0.833)
+                                                color: recipeRow.current ? root.theme.fg : root.theme.faint
+                                                font.family: root.theme.family
+                                                font.pixelSize: root.theme.px(0.833)
                                             }
                                             Text {
                                                 textFormat: Text.PlainText
                                                 text: "⏎"
                                                 visible: recipeRow.current && !recipeRow.blocked
-                                                color: root.focusColor
-                                                font.family: root.fontFamily
-                                                font.pixelSize: root.px(1.083)
+                                                color: root.theme.focus
+                                                font.family: root.theme.family
+                                                font.pixelSize: root.theme.px(1.083)
                                                 font.bold: true
                                             }
                                         }
@@ -1436,12 +1211,14 @@ Item {
                                     }
                                 }
                                 Hint {
+                                    theme: root.theme
                                     Layout.topMargin: 6
                                     visible: text !== ""
                                     text: root.matched.note
-                                    color: root.fg
+                                    color: root.theme.fg
                                 }
                                 Hint {
+                                    theme: root.theme
                                     Layout.topMargin: 6
                                     visible: root.outputFolder !== ""
                                     text: "saves to " + Model.folderLabel(root.outputFolder, root.homeDir)
@@ -1453,9 +1230,9 @@ Item {
                                 Layout.fillWidth: true
                                 visible: root.advanced
                                 implicitHeight: fields.implicitHeight + 2
-                                color: root.alpha(root.fg, 0.02)
+                                color: root.theme.alpha(root.theme.fg, 0.02)
                                 border.width: 1
-                                border.color: root.line
+                                border.color: root.theme.line
                                 ColumnLayout {
                                     id: fields
                                     x: 1
@@ -1463,6 +1240,7 @@ Item {
                                     width: parent.width - 2
                                     spacing: 0
                                     FieldRow {
+                                        theme: root.theme
                                         label: "FORMAT"
                                         Flow {
                                             Layout.fillWidth: true
@@ -1474,39 +1252,42 @@ Item {
                                                     required property var modelData
                                                     options: formatGroup.modelData.items.map(item => ({ value: item, label: item === Model.SEQUENCE ? "SEQ" : item.toUpperCase() }))
                                                     value: formatGroup.modelData.items.indexOf(root.formatValue) >= 0 ? root.formatValue : ""
-                                                    foreground: root.fg
-                                                    selectedColor: root.sage
-                                                    focusColor: root.focusColor
-                                                    fontFamily: root.fontFamily
-                                                    fontSize: root.px(0.917)
+                                                    foreground: root.theme.fg
+                                                    selectedColor: root.theme.sage
+                                                    focusColor: root.theme.focus
+                                                    fontFamily: root.theme.family
+                                                    fontSize: root.theme.px(0.917)
                                                     Accessible.name: formatGroup.modelData.title + " formats"
                                                     onChanged: v => { root.formatValue = v; root.syncCommand() }
                                                 }
                                             }
                                         }
                                         Hint {
+                                            theme: root.theme
                                             text: root.unavailableFormats !== "" ? root.unavailableFormats
                                                 : (root.inputKind === "image" ? "image formats" : "video formats  ·  stills  ·  SEQ = every frame as PNG")
-                                            color: root.faint
-                                            font.pixelSize: root.px(0.833)
+                                            color: root.theme.faint
+                                            font.pixelSize: root.theme.px(0.833)
                                         }
                                     }
                                     FieldRow {
+                                        theme: root.theme
                                         label: "MODE"
                                         enabled: root.formatValue !== Model.SEQUENCE
                                         Segments {
                                             options: [{ value: "0", label: "target size" }, { value: "1", label: "quick" }]
                                             value: String(root.modeIndex)
-                                            foreground: root.fg
-                                            selectedColor: root.sage
-                                            focusColor: root.focusColor
-                                            fontFamily: root.fontFamily
-                                            fontSize: root.px(0.917)
+                                            foreground: root.theme.fg
+                                            selectedColor: root.theme.sage
+                                            focusColor: root.theme.focus
+                                            fontFamily: root.theme.family
+                                            fontSize: root.theme.px(0.917)
                                             Accessible.name: "Conversion mode"
                                             onChanged: v => { root.modeIndex = Number(v); root.syncCommand() }
                                         }
                                     }
                                     FieldRow {
+                                        theme: root.theme
                                         label: "MAX SIZE"
                                         enabled: root.sizeShown
                                         RowLayout {
@@ -1514,10 +1295,10 @@ Item {
                                             Ui.TextField {
                                                 id: sizeInput
                                                 text: "50"
-                                                Layout.preferredWidth: root.px(6.5)
-                                                foreground: root.fg
-                                                accent: root.accent
-                                                font.family: root.fontFamily
+                                                Layout.preferredWidth: root.theme.px(6.5)
+                                                foreground: root.theme.fg
+                                                accent: root.theme.accent
+                                                font.family: root.theme.family
                                                 font.bold: true
                                                 selectByMouse: true
                                                 horizontalAlignment: TextInput.AlignRight
@@ -1528,11 +1309,11 @@ Item {
                                             Segments {
                                                 options: ["MB", "KB"]
                                                 value: root.unitText
-                                                foreground: root.fg
-                                                selectedColor: root.sage
-                                                focusColor: root.focusColor
-                                                fontFamily: root.fontFamily
-                                                fontSize: root.px(0.917)
+                                                foreground: root.theme.fg
+                                                selectedColor: root.theme.sage
+                                                focusColor: root.theme.focus
+                                                fontFamily: root.theme.family
+                                                fontSize: root.theme.px(0.917)
                                                 Accessible.name: "Size unit"
                                                 onChanged: v => { root.unitIndex = v === "KB" ? 1 : 0; root.syncCommand() }
                                             }
@@ -1544,9 +1325,9 @@ Item {
                                             Text {
                                                 textFormat: Text.PlainText
                                                 text: "presets"
-                                                color: root.faint
-                                                font.family: root.fontFamily
-                                                font.pixelSize: root.px(0.833)
+                                                color: root.theme.faint
+                                                font.family: root.theme.family
+                                                font.pixelSize: root.theme.px(0.833)
                                                 height: 18
                                                 verticalAlignment: Text.AlignVCenter
                                             }
@@ -1558,17 +1339,17 @@ Item {
                                                     readonly property bool on: sizeInput.text === String(presetChip.modelData.size) && root.unitText === presetChip.modelData.unit
                                                     implicitWidth: presetText.implicitWidth + 12
                                                     implicitHeight: 18
-                                                    color: presetMouse.containsMouse ? root.surface : "transparent"
+                                                    color: presetMouse.containsMouse ? root.theme.surface : "transparent"
                                                     border.width: 1
-                                                    border.color: presetChip.on ? root.focusColor : root.alpha(root.fg, 0.15)
+                                                    border.color: presetChip.on ? root.theme.focus : root.theme.alpha(root.theme.fg, 0.15)
                                                     Text {
                                                         id: presetText
                                                         anchors.centerIn: parent
                                                         textFormat: Text.PlainText
                                                         text: presetChip.modelData.label
-                                                        color: presetChip.on ? root.focusColor : root.dim
-                                                        font.family: root.fontFamily
-                                                        font.pixelSize: root.px(0.833)
+                                                        color: presetChip.on ? root.theme.focus : root.theme.dim
+                                                        font.family: root.theme.family
+                                                        font.pixelSize: root.theme.px(0.833)
                                                     }
                                                     MouseArea {
                                                         id: presetMouse
@@ -1585,94 +1366,102 @@ Item {
                                             }
                                         }
                                         Hint {
+                                            theme: root.theme
                                             visible: !Model.validSize(sizeInput.text)
                                             text: "Enter a size greater than zero, for example 50 or 0.5."
-                                            color: root.urgent
-                                            font.pixelSize: root.px(0.833)
+                                            color: root.theme.urgent
+                                            font.pixelSize: root.theme.px(0.833)
                                         }
                                     }
                                     FieldRow {
+                                        theme: root.theme
                                         label: "PREFER"
                                         enabled: root.sizeShown && root.formatValue === "GIF" && root.inputKind !== "image"
                                         Segments {
                                             options: [{ value: "0", label: "motion" }, { value: "1", label: "balanced" }, { value: "2", label: "detail" }]
                                             value: String(root.preferenceIndex)
-                                            foreground: root.fg
-                                            selectedColor: root.sage
-                                            focusColor: root.focusColor
-                                            fontFamily: root.fontFamily
-                                            fontSize: root.px(0.917)
+                                            foreground: root.theme.fg
+                                            selectedColor: root.theme.sage
+                                            focusColor: root.theme.focus
+                                            fontFamily: root.theme.family
+                                            fontSize: root.theme.px(0.917)
                                             Accessible.name: "Quality preference"
                                             onChanged: v => { root.preferenceIndex = Number(v); root.syncCommand() }
                                         }
                                         Hint {
+                                            theme: root.theme
                                             text: ["GIF only  ·  keep smooth motion, drop resolution first",
                                                    "GIF only  ·  trade resolution and frame rate evenly",
                                                    "GIF only  ·  keep a sharp picture, drop frames first"][root.preferenceIndex] || ""
-                                            color: root.faint
-                                            font.pixelSize: root.px(0.833)
+                                            color: root.theme.faint
+                                            font.pixelSize: root.theme.px(0.833)
                                         }
                                     }
                                     FieldRow {
+                                        theme: root.theme
                                         label: "QUALITY"
                                         visible: root.formatValue !== Model.SEQUENCE
                                         enabled: root.modeIndex === 1
                                         Segments {
                                             options: [{ value: "0", label: "small" }, { value: "1", label: "balanced" }, { value: "2", label: "high" }]
                                             value: String(root.presetIndex)
-                                            foreground: root.fg
-                                            selectedColor: root.sage
-                                            focusColor: root.focusColor
-                                            fontFamily: root.fontFamily
-                                            fontSize: root.px(0.917)
+                                            foreground: root.theme.fg
+                                            selectedColor: root.theme.sage
+                                            focusColor: root.theme.focus
+                                            fontFamily: root.theme.family
+                                            fontSize: root.theme.px(0.917)
                                             Accessible.name: "Quality preset"
                                             onChanged: v => { root.presetIndex = Number(v); root.syncCommand() }
                                         }
                                     }
                                     FieldRow {
+                                        theme: root.theme
                                         label: "FRAMES"
                                         visible: root.formatValue === Model.SEQUENCE
                                         Segments {
                                             options: [{ value: "0", label: "every" }, { value: "24", label: "24 fps" }, { value: "10", label: "10 fps" }, { value: "5", label: "5 fps" }, { value: "1", label: "1 fps" }]
                                             value: String(root.sequenceFps)
-                                            foreground: root.fg
-                                            selectedColor: root.sage
-                                            focusColor: root.focusColor
-                                            fontFamily: root.fontFamily
-                                            fontSize: root.px(0.917)
+                                            foreground: root.theme.fg
+                                            selectedColor: root.theme.sage
+                                            focusColor: root.theme.focus
+                                            fontFamily: root.theme.family
+                                            fontSize: root.theme.px(0.917)
                                             Accessible.name: "Frames per second to keep"
                                             onChanged: v => { root.sequenceFps = Number(v); root.syncCommand() }
                                         }
                                     }
                                     FieldRow {
+                                        theme: root.theme
                                         label: "SAVE TO"
                                         RowLayout {
                                             Layout.fillWidth: true
                                             spacing: 8
                                             Text {
                                                 text: "󰉋"
-                                                color: root.mist
-                                                font.family: root.fonts.family
-                                                font.pixelSize: root.px(1.083)
+                                                color: root.theme.mist
+                                                font.family: root.theme.iconFamily
+                                                font.pixelSize: root.theme.px(1.083)
                                             }
                                             Text {
                                                 textFormat: Text.PlainText
                                                 Layout.fillWidth: true
                                                 text: root.outputFolder ? Model.folderLabel(root.outputFolder, root.homeDir)
                                                     : (service.inputPath ? "next to source  ·  " + Model.folderLabel(Model.dirname(service.inputPath), root.homeDir) : "next to source")
-                                                color: root.outputFolder ? root.fg : root.dim
-                                                font.family: root.fontFamily
-                                                font.pixelSize: root.px(1)
+                                                color: root.outputFolder ? root.theme.fg : root.theme.dim
+                                                font.family: root.theme.family
+                                                font.pixelSize: root.theme.px(1)
                                                 font.bold: root.outputFolder !== ""
                                                 elide: Text.ElideLeft
                                                 Accessible.name: "Output folder: " + text
                                             }
                                             TextButton {
+                                                theme: root.theme
                                                 label: folderPicker.running ? "choosing…" : "change"
                                                 enabled: !root.pickerBusy
                                                 onClicked: root.chooseFolder()
                                             }
                                             TextButton {
+                                                theme: root.theme
                                                 visible: root.outputFolder !== ""
                                                 label: "×"
                                                 Accessible.name: "Save next to the source again"
@@ -1689,16 +1478,16 @@ Item {
                                                 width: 11
                                                 height: 11
                                                 anchors.verticalCenter: parent.verticalCenter
-                                                color: prefs.rememberFolder ? root.sage : "transparent"
+                                                color: prefs.rememberFolder ? root.theme.sage : "transparent"
                                                 border.width: 1
-                                                border.color: parent.activeFocus ? root.focusColor : (prefs.rememberFolder ? root.sage : root.alpha(root.fg, 0.4))
+                                                border.color: parent.activeFocus ? root.theme.focus : (prefs.rememberFolder ? root.theme.sage : root.theme.alpha(root.theme.fg, 0.4))
                                             }
                                             Text {
                                                 textFormat: Text.PlainText
                                                 text: "remember this folder"
-                                                color: root.dim
-                                                font.family: root.fontFamily
-                                                font.pixelSize: root.px(0.833)
+                                                color: root.theme.dim
+                                                font.family: root.theme.family
+                                                font.pixelSize: root.theme.px(0.833)
                                                 MouseArea {
                                                     anchors.fill: parent
                                                     anchors.leftMargin: -19
@@ -1712,7 +1501,7 @@ Item {
                                     Rectangle {
                                         Layout.fillWidth: true
                                         implicitHeight: summaryRow.implicitHeight + 24
-                                        color: root.alpha(root.focusColor, 0.06)
+                                        color: root.theme.alpha(root.theme.focus, 0.06)
                                         RowLayout {
                                             id: summaryRow
                                             anchors.left: parent.left
@@ -1724,14 +1513,14 @@ Item {
                                             ColumnLayout {
                                                 Layout.fillWidth: true
                                                 spacing: 3
-                                                SectionLabel { text: "WILL MAKE"; font.pixelSize: root.px(0.75) }
+                                                SectionLabel { theme: root.theme; text: "WILL MAKE"; font.pixelSize: root.theme.px(0.75) }
                                                 Text {
                                                     textFormat: Text.PlainText
                                                     Layout.fillWidth: true
                                                     text: Model.outputName(service.inputPath, root.currentFields())
-                                                    color: root.fg
-                                                    font.family: root.fontFamily
-                                                    font.pixelSize: root.px(1)
+                                                    color: root.theme.fg
+                                                    font.family: root.theme.family
+                                                    font.pixelSize: root.theme.px(1)
                                                     font.bold: true
                                                     elide: Text.ElideMiddle
                                                 }
@@ -1739,13 +1528,14 @@ Item {
                                                     textFormat: Text.PlainText
                                                     Layout.fillWidth: true
                                                     text: root.fieldsRecipe.problem || root.fieldsRecipe.note || root.fieldsRecipe.detail
-                                                    color: root.fieldsRecipe.problem ? root.urgent : root.dim
-                                                    font.family: root.fontFamily
-                                                    font.pixelSize: root.px(0.833)
+                                                    color: root.fieldsRecipe.problem ? root.theme.urgent : root.theme.dim
+                                                    font.family: root.theme.family
+                                                    font.pixelSize: root.theme.px(0.833)
                                                     wrapMode: Text.WordWrap
                                                 }
                                             }
                                             TextButton {
+                                                theme: root.theme
                                                 key: "★"
                                                 label: root.activePinned ? "unpin" : "pin"
                                                 Accessible.name: root.activePinned ? "Unpin this recipe" : "Pin this recipe to the top of the list"
@@ -1755,9 +1545,9 @@ Item {
                                                 id: convertButton
                                                 implicitWidth: convertRow.implicitWidth + 28
                                                 implicitHeight: convertRow.implicitHeight + 18
-                                                color: root.canConvert ? (convertMouse.pressed ? Qt.darker(root.focusColor, 1.15) : root.focusColor) : root.alpha(root.fg, 0.12)
+                                                color: root.canConvert ? (convertMouse.pressed ? Qt.darker(root.theme.focus, 1.15) : root.theme.focus) : root.theme.alpha(root.theme.fg, 0.12)
                                                 border.width: convertButton.activeFocus ? 2 : 0
-                                                border.color: root.fg
+                                                border.color: root.theme.fg
                                                 activeFocusOnTab: root.canConvert
                                                 Accessible.role: Accessible.Button
                                                 Accessible.name: "Convert"
@@ -1774,9 +1564,9 @@ Item {
                                                             required property string modelData
                                                             textFormat: Text.PlainText
                                                             text: modelData
-                                                            color: root.canConvert ? root.bg : root.faint
-                                                            font.family: root.fontFamily
-                                                            font.pixelSize: root.px(1)
+                                                            color: root.canConvert ? root.theme.bg : root.theme.faint
+                                                            font.family: root.theme.family
+                                                            font.pixelSize: root.theme.px(1)
                                                             font.bold: true
                                                         }
                                                     }
@@ -1808,10 +1598,10 @@ Item {
                                 dimmed: 0.55
                                 imageSource: preview.sourceUrl
                                 loading: preview.sourceLoading
-                                foreground: root.fg
-                                background: root.bg
-                                fontFamily: root.fontFamily
-                                fontSize: root.fonts.body
+                                foreground: root.theme.fg
+                                background: root.theme.bg
+                                fontFamily: root.theme.family
+                                fontSize: root.theme.body
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true
@@ -1820,9 +1610,9 @@ Item {
                                     textFormat: Text.PlainText
                                     Layout.fillWidth: true
                                     text: (service.isBatch ? root.batchReady.length + " files" : Model.name(service.inputPath)) + "  →  " + root.jobCommand
-                                    color: root.dim
-                                    font.family: root.fontFamily
-                                    font.pixelSize: root.px(0.917)
+                                    color: root.theme.dim
+                                    font.family: root.theme.family
+                                    font.pixelSize: root.theme.px(0.917)
                                     elide: Text.ElideMiddle
                                 }
                                 Text {
@@ -1831,9 +1621,9 @@ Item {
                                     text: service.cancelling ? "Cancelling…"
                                         : service.isBatch ? "File " + Math.min(root.batchReady.length, root.batchFinished + 1) + " of " + root.batchReady.length
                                         : (service.phase.indexOf("Finding") === 0 ? "Finding the best quality that fits" : service.phase)
-                                    color: root.fg
-                                    font.family: root.fontFamily
-                                    font.pixelSize: root.px(1.5)
+                                    color: root.theme.fg
+                                    font.family: root.theme.family
+                                    font.pixelSize: root.theme.px(1.5)
                                     font.bold: true
                                     wrapMode: Text.WordWrap
                                 }
@@ -1848,17 +1638,17 @@ Item {
                                         Layout.fillWidth: true
                                         text: service.isBatch ? (service.batchCurrent >= 0 ? Model.name(service.batch[service.batchCurrent].path) : "")
                                             : service.currentPass ? "pass " + service.currentPass : (service.phase.indexOf("Finding") === 0 ? "analysing samples" : "")
-                                        color: root.mist
-                                        font.family: root.fontFamily
-                                        font.pixelSize: root.px(0.917)
+                                        color: root.theme.mist
+                                        font.family: root.theme.family
+                                        font.pixelSize: root.theme.px(0.917)
                                         font.bold: true
                                     }
                                     Text {
                                         visible: !progressTrack.indeterminate
                                         text: Math.round((service.isBatch ? root.batchProgress : service.progress) * 100) + "%"
-                                        color: root.fg
-                                        font.family: root.fontFamily
-                                        font.pixelSize: root.px(0.917)
+                                        color: root.theme.fg
+                                        font.family: root.theme.family
+                                        font.pixelSize: root.theme.px(0.917)
                                         font.bold: true
                                     }
                                 }
@@ -1867,12 +1657,12 @@ Item {
                                     readonly property bool indeterminate: !service.isBatch && service.phase.indexOf("Finding") === 0
                                     Layout.fillWidth: true
                                     implicitHeight: 6
-                                    color: root.alpha(root.fg, 0.08)
+                                    color: root.theme.alpha(root.theme.fg, 0.08)
                                     clip: true
                                     Rectangle {
                                         visible: !progressTrack.indeterminate
                                         height: parent.height
-                                        color: root.focusColor
+                                        color: root.theme.focus
                                         width: parent.width * Math.max(0, Math.min(1, service.isBatch ? root.batchProgress : service.progress))
                                         Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                                     }
@@ -1880,7 +1670,7 @@ Item {
                                         id: sweep
                                         visible: progressTrack.indeterminate
                                         height: parent.height
-                                        color: root.focusColor
+                                        color: root.theme.focus
                                         width: parent.width * 0.3
                                         NumberAnimation on x {
                                             running: sweep.visible && service.busy
@@ -1901,7 +1691,7 @@ Item {
                                 spacing: 8
                                 readonly property real span: Math.max(root.jobLimitBytes * 1.39,
                                     Math.max.apply(null, service.candidates.map(c => c.estimated_bytes || 0)), 1)
-                                SectionLabel { text: "CANDIDATES" }
+                                SectionLabel { theme: root.theme; text: "CANDIDATES" }
                                 Repeater {
                                     model: service.candidates
                                     delegate: ColumnLayout {
@@ -1919,36 +1709,36 @@ Item {
                                                 text: cand.modelData.width + "×" + cand.modelData.height
                                                       + (cand.modelData.fps ? "  ·  " + Number(cand.modelData.fps).toFixed(1).replace(".0", "") + " fps" : "")
                                                       + (cand.modelData.colors ? "  ·  " + cand.modelData.colors + " col" : "")
-                                                color: root.fg
-                                                font.family: root.fontFamily
-                                                font.pixelSize: root.px(0.917)
+                                                color: root.theme.fg
+                                                font.family: root.theme.family
+                                                font.pixelSize: root.theme.px(0.917)
                                                 elide: Text.ElideRight
                                             }
                                             Text {
                                                 textFormat: Text.PlainText
                                                 text: "≈ " + Model.compactSize(cand.bytes)
-                                                color: cand.fits ? root.mist : root.urgent
-                                                font.family: root.fontFamily
-                                                font.pixelSize: root.px(0.917)
+                                                color: cand.fits ? root.theme.mist : root.theme.urgent
+                                                font.family: root.theme.family
+                                                font.pixelSize: root.theme.px(0.917)
                                                 font.bold: true
                                             }
                                         }
                                         Item {
                                             Layout.fillWidth: true
                                             implicitHeight: 10
-                                            Rectangle { anchors.verticalCenter: parent.verticalCenter; width: parent.width; height: 4; color: root.alpha(root.fg, 0.06) }
+                                            Rectangle { anchors.verticalCenter: parent.verticalCenter; width: parent.width; height: 4; color: root.theme.alpha(root.theme.fg, 0.06) }
                                             Rectangle {
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 height: 4
                                                 width: parent.width * Math.min(1, cand.bytes / candList.span)
-                                                color: cand.fits ? root.sage : root.urgent
+                                                color: cand.fits ? root.theme.sage : root.theme.urgent
                                             }
                                             Rectangle {
                                                 visible: root.jobLimitBytes > 0
                                                 x: parent.width * root.jobLimitBytes / candList.span
                                                 width: 1
                                                 height: 10
-                                                color: root.fg
+                                                color: root.theme.fg
                                             }
                                         }
                                     }
@@ -1961,11 +1751,12 @@ Item {
                                     textFormat: Text.PlainText
                                     Layout.fillWidth: true
                                     text: Model.duration(Math.max(0, (root.clock - service.startedAt) / 1000)) + " elapsed"
-                                    color: root.faint
-                                    font.family: root.fontFamily
-                                    font.pixelSize: root.px(0.917)
+                                    color: root.theme.faint
+                                    font.family: root.theme.family
+                                    font.pixelSize: root.theme.px(0.917)
                                 }
                                 TextButton {
+                                    theme: root.theme
                                     key: "esc"
                                     label: service.cancelling ? "cancelling…" : "cancel"
                                     enabled: !service.cancelling
@@ -1975,6 +1766,7 @@ Item {
                         }
                         // Reading a file: the phase on its own.
                         Hint {
+                            theme: root.theme
                             visible: service.busy && root.screen !== "converting"
                             text: service.phase
                         }
@@ -1994,13 +1786,13 @@ Item {
                             resultMeta: service.result ? Model.dimensionsText(service.result.width, service.result.height) + "  ·  " + Model.compactSize(service.result.bytes) : ""
                             sourceBytes: (service.metadata && service.metadata.bytes) || 0
                             limitBytes: root.jobLimitBytes
-                            foreground: root.fg
-                            background: root.bg
-                            accent: root.sage
-                            okColor: root.mist
-                            limitColor: root.focusColor
-                            fontFamily: root.fontFamily
-                            fontSize: root.fonts.body
+                            foreground: root.theme.fg
+                            background: root.theme.bg
+                            accent: root.theme.sage
+                            okColor: root.theme.mist
+                            limitColor: root.theme.focus
+                            fontFamily: root.theme.family
+                            fontSize: root.theme.body
                         }
                         // Batch summary: the sizes before and after, what failed.
                         ColumnLayout {
@@ -2012,9 +1804,9 @@ Item {
                                 Text {
                                     textFormat: Text.PlainText
                                     text: service.result ? Model.compactSize(service.result.bytes_after) : ""
-                                    color: root.fg
-                                    font.family: root.fontFamily
-                                    font.pixelSize: root.px(3.6)
+                                    color: root.theme.fg
+                                    font.family: root.theme.family
+                                    font.pixelSize: root.theme.px(3.6)
                                     font.bold: true
                                 }
                                 Rectangle {
@@ -2022,17 +1814,17 @@ Item {
                                     Layout.bottomMargin: 8
                                     implicitWidth: batchBadge.implicitWidth + 16
                                     implicitHeight: batchBadge.implicitHeight + 6
-                                    color: root.alpha(root.sage, 0.22)
+                                    color: root.theme.alpha(root.theme.sage, 0.22)
                                     border.width: 1
-                                    border.color: root.sage
+                                    border.color: root.theme.sage
                                     Text {
                                         id: batchBadge
                                         anchors.centerIn: parent
                                         textFormat: Text.PlainText
                                         text: service.result ? "✓ " + service.result.done + " of " + service.result.total + " done" : ""
-                                        color: root.mist
-                                        font.family: root.fontFamily
-                                        font.pixelSize: root.px(0.917)
+                                        color: root.theme.mist
+                                        font.family: root.theme.family
+                                        font.pixelSize: root.theme.px(0.917)
                                         font.bold: true
                                     }
                                 }
@@ -2042,9 +1834,9 @@ Item {
                                 Layout.fillWidth: true
                                 text: service.result ? Model.savingsText(service.result.bytes_before, service.result.bytes_after)
                                     + (service.result.failed ? "  ·  " + service.result.failed + " failed" : "") : ""
-                                color: service.result && service.result.failed ? root.urgent : root.faint
-                                font.family: root.fontFamily
-                                font.pixelSize: root.px(0.917)
+                                color: service.result && service.result.failed ? root.theme.urgent : root.theme.faint
+                                font.family: root.theme.family
+                                font.pixelSize: root.theme.px(0.917)
                                 wrapMode: Text.WordWrap
                             }
                         }
@@ -2052,20 +1844,20 @@ Item {
                             Layout.fillWidth: true
                             visible: root.screen === "result" && service.isBatch
                             spacing: 0
-                            ActionRow { primary: true; glyph: "󰉋"; key: "⏎"; label: "Open the folder"; onTriggered: Qt.openUrlExternally(Model.fileUri(root.batchFolder())) }
-                            ActionRow { glyph: "󰆏"; key: "c"; label: "Copy all files to clipboard"; onTriggered: root.copy(service.result.paths.map(p => Model.fileUri(p)).join("\r\n") + "\r\n", true) }
-                            ActionRow { glyph: "󰅍"; key: "p"; label: "Copy all paths"; onTriggered: root.copy(service.result.paths.join("\n"), false) }
-                            ActionRow { glyph: "󰐕"; key: "n"; label: "Convert more"; onTriggered: root.convertAnother() }
+                            ActionRow { theme: root.theme; primary: true; glyph: "󰉋"; key: "⏎"; label: "Open the folder"; onTriggered: Qt.openUrlExternally(Model.fileUri(root.batchFolder())) }
+                            ActionRow { theme: root.theme; glyph: "󰆏"; key: "c"; label: "Copy all files to clipboard"; onTriggered: root.copy(service.result.paths.map(p => Model.fileUri(p)).join("\r\n") + "\r\n", true) }
+                            ActionRow { theme: root.theme; glyph: "󰅍"; key: "p"; label: "Copy all paths"; onTriggered: root.copy(service.result.paths.join("\n"), false) }
+                            ActionRow { theme: root.theme; glyph: "󰐕"; key: "n"; label: "Convert more"; onTriggered: root.convertAnother() }
                         }
                         ColumnLayout {
                             Layout.fillWidth: true
                             visible: root.screen === "result" && !service.isBatch
                             spacing: 0
-                            ActionRow { primary: true; glyph: "󰈔"; key: "⏎"; label: service.result && service.result.kind === "sequence" ? "Open frames" : "Open file"; onTriggered: Qt.openUrlExternally(Model.fileUri(service.result.path)) }
-                            ActionRow { glyph: "󰉋"; key: "o"; label: "Show in folder"; onTriggered: root.openResultFolder() }
-                            ActionRow { glyph: "󰆏"; key: "c"; label: service.result && service.result.kind === "sequence" ? "Copy folder to clipboard" : "Copy file to clipboard"; onTriggered: root.copy(Model.fileUri(service.result.path) + "\r\n", true) }
-                            ActionRow { glyph: "󰅍"; key: "p"; label: "Copy path"; onTriggered: root.copy(service.result.path, false) }
-                            ActionRow { glyph: "󰐕"; key: "n"; label: "Convert another"; onTriggered: root.convertAnother() }
+                            ActionRow { theme: root.theme; primary: true; glyph: "󰈔"; key: "⏎"; label: service.result && service.result.kind === "sequence" ? "Open frames" : "Open file"; onTriggered: Qt.openUrlExternally(Model.fileUri(service.result.path)) }
+                            ActionRow { theme: root.theme; glyph: "󰉋"; key: "o"; label: "Show in folder"; onTriggered: root.openResultFolder() }
+                            ActionRow { theme: root.theme; glyph: "󰆏"; key: "c"; label: service.result && service.result.kind === "sequence" ? "Copy folder to clipboard" : "Copy file to clipboard"; onTriggered: root.copy(Model.fileUri(service.result.path) + "\r\n", true) }
+                            ActionRow { theme: root.theme; glyph: "󰅍"; key: "p"; label: "Copy path"; onTriggered: root.copy(service.result.path, false) }
+                            ActionRow { theme: root.theme; glyph: "󰐕"; key: "n"; label: "Convert another"; onTriggered: root.convertAnother() }
                         }
 
                         // ── Status ────────────────────────────────────────
@@ -2075,32 +1867,37 @@ Item {
                             visible: root.staleInterface
                             text: "󰀪  Interface v" + root.appVersion + " is running, but v" + service.backendVersion
                                   + " is installed. Run `omarchy restart shell` to load the update."
-                            color: root.urgent
-                            font.family: root.fontFamily
-                            font.pixelSize: root.fonts.bodySmall
+                            color: root.theme.urgent
+                            font.family: root.theme.family
+                            font.pixelSize: root.theme.bodySmall
                             wrapMode: Text.WordWrap
                         }
-                        Hint { text: "󰄬  " + root.clipboardStatus; visible: root.clipboardStatus !== ""; color: root.fg }
-                        Hint { text: root.pasteNote; visible: root.pasteNote !== "" && !service.busy; color: root.fg }
+                        Hint { theme: root.theme; text: "󰄬  " + root.clipboardStatus; visible: root.clipboardStatus !== ""; color: root.theme.fg }
+                        Hint { theme: root.theme; text: root.pasteNote; visible: root.pasteNote !== "" && !service.busy; color: root.theme.fg }
                         Text {
                             textFormat: Text.PlainText
                             Layout.fillWidth: true
                             text: "󰅚  " + service.error
                             visible: service.error !== ""
-                            color: root.urgent
-                            font.family: root.fontFamily
-                            font.pixelSize: root.fonts.body
+                            color: root.theme.urgent
+                            font.family: root.theme.family
+                            font.pixelSize: root.theme.body
                             font.bold: true
                             wrapMode: Text.WordWrap
                         }
-                        Hint { text: service.phase; visible: !service.busy && !service.result && text.indexOf("Cancelled") === 0; color: root.fg }
+                        Hint { theme: root.theme; text: service.phase; visible: !service.busy && !service.result && text.indexOf("Cancelled") === 0; color: root.theme.fg }
                         // The gifsicle tip only matters when a GIF is about to be made.
-                        Hint { text: service.notice; visible: text !== "" && !service.busy && (text.indexOf("gifsicle") < 0 || (root.inputKind !== "image" && root.activeFormat === "GIF")) }
-                        ActionButton {
+                        Hint { theme: root.theme; text: service.notice; visible: text !== "" && !service.busy && (text.indexOf("gifsicle") < 0 || (root.inputKind !== "image" && root.activeFormat === "GIF")) }
+                        Ui.Button {
                             id: detailsButton
                             property bool checked: false
                             visible: service.details !== ""
                             bordered: false
+                            focusable: true
+                            foreground: root.theme.fg
+                            accent: root.theme.accent
+                            fontFamily: root.theme.family
+                            opacity: enabled ? 1 : 0.4
                             iconText: checked ? "󰅀" : "󰅂"
                             text: "Details"
                             onClicked: checked = !checked
@@ -2113,13 +1910,13 @@ Item {
                             readOnly: true
                             selectByMouse: true
                             wrapMode: TextEdit.WrapAnywhere
-                            color: root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: root.fonts.caption
+                            color: root.theme.dim
+                            font.family: root.theme.family
+                            font.pixelSize: root.theme.caption
                             background: Rectangle {
-                                color: root.surface
+                                color: root.theme.surface
                                 border.width: 1
-                                border.color: root.line
+                                border.color: root.theme.line
                             }
                         }
                     }
@@ -2129,8 +1926,8 @@ Item {
                 Rectangle {
                     Layout.fillWidth: true
                     implicitHeight: keyRow.implicitHeight + 14
-                    color: root.alpha(root.fg, 0.03)
-                    Rectangle { width: parent.width; height: 1; color: root.line }
+                    color: root.theme.alpha(root.theme.fg, 0.03)
+                    Rectangle { width: parent.width; height: 1; color: root.theme.line }
                     RowLayout {
                         id: keyRow
                         anchors.fill: parent
@@ -2153,17 +1950,17 @@ Item {
                                 Text {
                                     textFormat: Text.PlainText
                                     text: keyHint.modelData[0]
-                                    color: root.focusColor
-                                    font.family: root.fontFamily
-                                    font.pixelSize: root.px(0.833)
+                                    color: root.theme.focus
+                                    font.family: root.theme.family
+                                    font.pixelSize: root.theme.px(0.833)
                                     font.bold: true
                                 }
                                 Text {
                                     textFormat: Text.PlainText
                                     text: keyHint.modelData[1]
-                                    color: root.dim
-                                    font.family: root.fontFamily
-                                    font.pixelSize: root.px(0.833)
+                                    color: root.theme.dim
+                                    font.family: root.theme.family
+                                    font.pixelSize: root.theme.px(0.833)
                                 }
                             }
                         }
@@ -2171,9 +1968,9 @@ Item {
                         Text {
                             textFormat: Text.PlainText
                             text: root.screen === "settings" ? "esc back to recipes" : (root.screen === "converting" ? "esc cancel" : "esc close")
-                            color: root.faint
-                            font.family: root.fontFamily
-                            font.pixelSize: root.px(0.833)
+                            color: root.theme.faint
+                            font.family: root.theme.family
+                            font.pixelSize: root.theme.px(0.833)
                         }
                     }
                 }
