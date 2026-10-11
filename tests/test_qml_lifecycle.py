@@ -31,6 +31,24 @@ class QmlLifecycle(unittest.TestCase):
             self.assertIn('PASS latest queued selection wins', output)
             self.assertNotIn('FAIL', output)
 
+    def test_last_line_without_newline(self):
+        with tempfile.TemporaryDirectory(prefix='omaconvert-qml-') as directory:
+            folder = Path(directory)
+            shutil.copytree(ROOT / 'services', folder / 'services')
+            shutil.copytree(ROOT / 'tests/qml/helpers', folder / 'helpers')
+            harness = (ROOT / 'tests/qml/TailHarness.qml').read_text().replace('../../services', 'services')
+            (folder / 'shell.qml').write_text(harness)
+            runtime = folder / 'runtime'
+            runtime.mkdir(mode=0o700)
+            environment = dict(os.environ, QT_QPA_PLATFORM='offscreen', QT_QPA_PLATFORMTHEME='',
+                               XDG_RUNTIME_DIR=str(runtime), QT_QUICK_CONTROLS_STYLE='Basic')
+            environment.pop('WAYLAND_DISPLAY', None)
+            completed = subprocess.run(['qs', '-p', str(folder), '--no-color'], env=environment,
+                                       text=True, capture_output=True, timeout=10)
+            output = completed.stdout + completed.stderr
+            self.assertIn('PASS last line without newline', output, output[-2000:])
+            self.assertNotIn('FAIL', output)
+
 
 @unittest.skipUnless(shutil.which('qs') and shutil.which('ffmpeg'), 'Quickshell and FFmpeg required')
 class PreviewCache(unittest.TestCase):

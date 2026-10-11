@@ -71,9 +71,7 @@ Item {
     // Independent of the job queue: a probe/convert must not cancel it, and
     // it must not cancel them. At most once per session unless it failed.
     function loadCapabilities() {
-        if (capabilities !== null || capabilitiesProcess.running) return
-        capabilitiesProcess.command = ["python3", executable, "--capabilities"]
-        capabilitiesProcess.running = true
+        if (capabilities === null) capabilitiesCall.run(["--capabilities"])
     }
     function beginProbe(path) {
         batch = []
@@ -250,23 +248,20 @@ Item {
         if (!cancelling && typeof event.progress === "number") progress = Math.max(0, Math.min(1, event.progress))
         if (typeof event.pass === "number") currentPass = event.pass
     }
+    // Quickshell ends the stdout parser (flushing a last line without a
+    // newline) before it reports the exit, so every event is in by now.
     function exited(job, exitCode) {
-        if (!isCurrent(job)) return
+        if (!isCurrent(job)) { job.destroy(); return }
         lastExit = exitCode
-        job.exitDone = true
-        job.maybeSettle()
+        settle(job)
     }
     function startFailed(job) {
         if (!isCurrent(job) || job.started) return
         job.terminalEvent = true
         error = "Could not start Python 3. Check that python3 and the plugin backend are installed."
-        job.exitDone = true
-        job.stdoutDone = true
-        job.maybeSettle()
+        settle(job)
     }
     function settle(job) {
-        if (!isCurrent(job)) { job.destroy(); return }
-        // Finalize only after process exit AND the stdout stream has drained.
         // Each launch owns its parsers; old objects cannot affect a new job.
         var wasCancelling = cancelling
         var nextPath = pendingSelection
@@ -294,88 +289,51 @@ Item {
     function loadHotkey() { runHotkey("status") }
     function setHotkey(enabled) { runHotkey(enabled ? "on" : "off") }
     function runHotkey(action) {
-        if (hotkeyProcess.running) return
+        if (hotkeyCall.busy) return
         hotkeyError = ""
-        hotkeyProcess.command = ["python3", executable, "--hotkey", action]
-        hotkeyProcess.running = true
+        hotkeyCall.run(["--hotkey", action])
     }
     // Ctrl+V: {kind: "file"|"text"|"none", path, text} arrives through pasted().
     signal pasted(var result)
-    function paste() {
-        if (pasteProcess.running) return
-        pasteProcess.command = ["python3", executable, "--paste"]
-        pasteProcess.running = true
-    }
+    function paste() { pasteCall.run(["--paste"]) }
 
     // Like capabilities: independent of the job queue.
     function loadOpenWith() { runOpenWith("status") }
     function setOpenWith(enabled) { runOpenWith(enabled ? "on" : "off") }
     function runOpenWith(action) {
-        if (openWithProcess.running) return
+        if (openWithCall.busy) return
         openWithError = ""
-        openWithProcess.command = ["python3", executable, "--open-with", action]
-        openWithProcess.running = true
+        openWithCall.run(["--open-with", action])
     }
 
-    Process {
-        id: hotkeyProcess
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: {
-                var lines = text.split("\n")
-                for (var i = 0; i < lines.length; i++) {
-                    var event = Model.eventFromLine(lines[i])
-                    if (event && event.event === "hotkey") root.hotkey = event
-                    else if (event && event.event === "error") root.hotkeyError = event.details || event.message
-                }
-            }
+    CliCall {
+        id: hotkeyCall
+        executable: root.executable
+        onEvent: event => {
+            if (event.event === "hotkey") root.hotkey = event
+            else if (event.event === "error") root.hotkeyError = event.details || event.message
         }
     }
-    Process {
-        id: pasteProcess
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: {
-                var lines = text.split("\n")
-                for (var i = 0; i < lines.length; i++) {
-                    var event = Model.eventFromLine(lines[i])
-                    if (event && event.event === "paste") root.pasted(event)
-                }
-            }
+    CliCall {
+        id: pasteCall
+        executable: root.executable
+        onEvent: event => { if (event.event === "paste") root.pasted(event) }
+    }
+    CliCall {
+        id: openWithCall
+        executable: root.executable
+        onEvent: event => {
+            if (event.event === "open-with") {
+                root.openWith = event
+                // Refresh our own entry written by an older version.
+                if (event.enabled && event.current === false) Qt.callLater(() => root.setOpenWith(true))
+            } else if (event.event === "error") root.openWithError = event.details || event.message
         }
     }
-
-    Process {
-        id: openWithProcess
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: {
-                var lines = text.split("\n")
-                for (var i = 0; i < lines.length; i++) {
-                    var event = Model.eventFromLine(lines[i])
-                    if (event && event.event === "open-with") {
-                        root.openWith = event
-                        // Refresh our own entry written by an older version.
-                        if (event.enabled && event.current === false) Qt.callLater(() => root.setOpenWith(true))
-                    }
-                    else if (event && event.event === "error") root.openWithError = event.details || event.message
-                }
-            }
-        }
-    }
-
-    Process {
-        id: capabilitiesProcess
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: {
-                var lines = text.split("\n")
-                for (var i = 0; i < lines.length; i++) {
-                    var event = Model.eventFromLine(lines[i])
-                    if (event && event.event === "capabilities") root.capabilities = event
-                }
-            }
-        }
+    CliCall {
+        id: capabilitiesCall
+        executable: root.executable
+        onEvent: event => { if (event.event === "capabilities") root.capabilities = event }
     }
 
     Component {
@@ -386,9 +344,6 @@ Item {
             required property var commandLine
             property bool started: false
             property bool terminalEvent: false
-            property bool exitDone: false
-            property bool stdoutDone: false
-            property int consumed: 0
 
             function start() {
                 process.command = commandLine
@@ -398,29 +353,13 @@ Item {
             function stop() {
                 if (process.running) process.signal(15)
             }
-            function maybeSettle() {
-                if (exitDone && stdoutDone) root.settle(job)
-            }
-            function consume(text, finalChunk) {
-                var end = finalChunk ? text.length : text.lastIndexOf("\n") + 1
-                if (end <= consumed) return
-                var lines = text.slice(consumed, end).split("\n")
-                consumed = end
-                for (var i = 0; i < lines.length; i++) {
-                    if (lines[i].trim()) root.receive(job, lines[i])
-                }
-            }
 
             Process {
                 id: process
-                stdout: StdioCollector {
-                    waitForEnd: false
-                    onDataChanged: job.consume(text, false)
-                    onStreamFinished: {
-                        job.consume(text, true)
-                        job.stdoutDone = true
-                        job.maybeSettle()
-                    }
+                // One line at a time: a collector would re-decode the whole
+                // growing output on every chunk (quadratic for a long batch).
+                stdout: SplitParser {
+                    onRead: line => { if (line.trim()) root.receive(job, line) }
                 }
                 stderr: SplitParser {
                     onRead: line => {
