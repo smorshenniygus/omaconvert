@@ -21,5 +21,5 @@ omarchy plugin validate "$snapshot"
 
 mkdir -p "$work/imports"
 ln -s "${OMARCHY_PATH:-/usr/share/omarchy}/shell" "$work/imports/qs"
-/usr/lib/qt6/bin/qmllint -I "$work/imports" OmaConvert.qml services/*.qml components/*.qml components/ui/*.qml
+/usr/lib/qt6/bin/qmllint -I "$work/imports" OmaConvert.qml services/*.qml components/*.qml components/ui/*.qml components/screens/*.qml
 echo "All checks passed."

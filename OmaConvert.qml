@@ -11,6 +11,7 @@ import "services"
 import "services/Model.js" as Model
 import "components"
 import "components/ui"
+import "components/screens"
 import qs.Commons as Commons
 
 Item {
@@ -26,7 +27,7 @@ Item {
     property string clipboardStatus: ""
     readonly property bool pickerBusy: filePicker.running || folderPicker.running
     readonly property string homeDir: Quickshell.env("HOME") || ""
-    readonly property var convertService: service
+    readonly property ConvertService convertService: service
     // What the window is doing: the request, the screen, starting a job.
     readonly property Session session: Session {
         service: root.convertService
@@ -36,7 +37,7 @@ Item {
         trimValid: trimBar.valid
         onConversionStarted: root.clipboardStatus = ""
     }
-    readonly property var previewService: preview
+    readonly property PreviewService previewService: preview
     readonly property var panelWindow: window
     readonly property var panelCard: card
     readonly property var trimControl: trimBar
@@ -356,67 +357,12 @@ Item {
                 anchors.fill: parent
                 spacing: 0
 
-                // ── Title bar ─────────────────────────────────────────────
-                Rectangle {
-                    Layout.fillWidth: true
-                    implicitHeight: titleRow.implicitHeight + 20
-                    color: "transparent"
-                    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.theme.line }
-                    RowLayout {
-                        id: titleRow
-                        anchors.fill: parent
-                        anchors.leftMargin: 16
-                        anchors.rightMargin: 12
-                        spacing: 10
-                        Text {
-                            text: "󰕧"
-                            color: root.theme.sage
-                            font.family: root.theme.iconFamily
-                            font.pixelSize: root.theme.px(1.333)
-                        }
-                        MonoText {
-                            theme: root.theme
-                            text: "omaconvert"
-                            font.bold: true
-                        }
-                        MonoText {
-                            theme: root.theme
-                            text: "v" + root.appVersion
-                            color: root.theme.faint
-                            Accessible.name: "OmaConvert version " + root.appVersion
-                        }
-                        Item { Layout.fillWidth: true }
-                        Rectangle {
-                            readonly property string label: root.session.screen === "converting" ? "CONVERTING"
-                                : (root.session.screen === "result" ? "READY"
-                                : (service.metadata ? (root.session.inputKind === "image" ? "IMAGE" : "VIDEO") : ""))
-                            readonly property color tone: root.session.screen === "converting" ? root.theme.focus : root.theme.mist
-                            visible: label !== ""
-                            implicitWidth: stateText.implicitWidth + 16
-                            implicitHeight: stateText.implicitHeight + 4
-                            color: root.theme.alpha(tone, 0.13)
-                            border.width: 1
-                            border.color: tone
-                            MonoText {
-                                id: stateText
-                                theme: root.theme
-                                size: 0.833
-                                anchors.centerIn: parent
-                                text: parent.label
-                                color: parent.tone
-                                font.bold: true
-                                font.letterSpacing: 1.5
-                            }
-                        }
-                        Ui.PanelActionButton {
-                            iconText: "󰅖"
-                            tooltipText: "Close  ·  Esc"
-                            foreground: root.theme.fg
-                            hoverColor: root.theme.urgent
-                            Accessible.name: "Close OmaConvert"
-                            onClicked: root.dismiss()
-                        }
-                    }
+                TitleBar {
+                    theme: root.theme
+                    session: root.session
+                    service: root.convertService
+                    appVersion: root.appVersion
+                    onCloseRequested: root.dismiss()
                 }
 
                 Flickable {
@@ -1621,54 +1567,10 @@ Item {
                     }
                 }
 
-                // ── Key bar: what the keys do right now ─────────────────
-                Rectangle {
-                    Layout.fillWidth: true
-                    implicitHeight: keyRow.implicitHeight + 14
-                    color: root.theme.alpha(root.theme.fg, 0.03)
-                    Rectangle { width: parent.width; height: 1; color: root.theme.line }
-                    RowLayout {
-                        id: keyRow
-                        anchors.fill: parent
-                        anchors.leftMargin: 16
-                        anchors.rightMargin: 16
-                        spacing: 16
-                        Repeater {
-                            model: ({
-                                empty: [["⏎", "browse"], ["ctrl v", "paste"], ["drop", "a file"]],
-                                recipes: [["↑↓", "choose"], ["⏎", "convert"], ["alt " + (root.session.matched.rows.length > 1 ? "1–" + Math.min(9, root.session.matched.rows.length) : "1"), "pick"], ["ctrl d", root.session.activePinned ? "unpin" : "pin"], ["ctrl ,", "settings"]],
-                                settings: [["tab", "next field"], ["←→", "choose"], ["ctrl d", root.session.activePinned ? "unpin" : "pin"], ["ctrl ⏎", "convert"]],
-                                converting: [],
-                                result: service.isBatch ? [["⏎", "folder"], ["c", "copy all"], ["p", "paths"], ["n", "more"]]
-                                    : [["⏎", "open"], ["o", "folder"], ["c", "copy"], ["p", "path"], ["n", "another"]]
-                            })[root.session.screen] || []
-                            delegate: Row {
-                                id: keyHint
-                                required property var modelData
-                                spacing: 5
-                                MonoText {
-                                    theme: root.theme
-                                    size: 0.833
-                                    text: keyHint.modelData[0]
-                                    color: root.theme.focus
-                                    font.bold: true
-                                }
-                                MonoText {
-                                    theme: root.theme
-                                    size: 0.833
-                                    text: keyHint.modelData[1]
-                                    color: root.theme.dim
-                                }
-                            }
-                        }
-                        Item { Layout.fillWidth: true }
-                        MonoText {
-                            theme: root.theme
-                            size: 0.833
-                            text: root.session.screen === "settings" ? "esc back to recipes" : (root.session.screen === "converting" ? "esc cancel" : "esc close")
-                            color: root.theme.faint
-                        }
-                    }
+                KeyBar {
+                    theme: root.theme
+                    session: root.session
+                    service: root.convertService
                 }
             }
         }
