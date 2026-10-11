@@ -22,6 +22,17 @@ class JsonArgumentParser(argparse.ArgumentParser):
         raise OmaConvertError("Invalid command line: " + message)
 
 
+def _number(message, cast=float):
+    """argparse type: a number, or our own error message (argparse lets an
+    OmaConvertError through untouched, so the JSON error reads as before)."""
+    def parse(raw):
+        try:
+            return cast(raw)
+        except (TypeError, ValueError):
+            raise OmaConvertError(message) from None
+    return parse
+
+
 def build_parser():
     parser = JsonArgumentParser(prog="omaconvert", add_help=True)
     parser.add_argument("input", nargs="*", help="input media file; several files make a batch with one recipe")
@@ -40,16 +51,21 @@ def build_parser():
                         help="probe every input (a probe-item event each) and exit")
     parser.add_argument("--preview", metavar="INPUT", help="generate a bounded PNG preview and exit")
     parser.add_argument("--preview-output", metavar="PATH", help="destination for --preview PNG")
-    parser.add_argument("--preview-size", default=str(DEFAULT_EDGE),
+    parser.add_argument("--preview-size", default=DEFAULT_EDGE,
+                        type=_number("Preview size must be a number of pixels, for example 320.", int),
                         help="preview longest edge in pixels (64-640, default 320)")
-    parser.add_argument("--preview-position", help="preview seek position in seconds")
+    parser.add_argument("--preview-position", type=_number("Preview position must be a number of seconds."),
+                        help="preview seek position in seconds")
     parser.add_argument("--forget-preview", metavar="PATH", action="append",
                         help="delete a cached window preview (src-preview.png or res-preview.png) and exit")
     parser.add_argument("--sequence", action="store_true",
                         help="with --format png: write every frame into a <name>-frames folder")
-    parser.add_argument("--sequence-fps", help="with --sequence: frames per second to keep (default: all)")
-    parser.add_argument("--trim-start", help="convert from this position in seconds")
-    parser.add_argument("--trim-end", help="convert up to this position in seconds")
+    parser.add_argument("--sequence-fps", type=_number("--sequence-fps must be a number of frames per second."),
+                        help="with --sequence: frames per second to keep (default: all)")
+    parser.add_argument("--trim-start", type=_number("--trim-start must be a number of seconds."),
+                        help="convert from this position in seconds")
+    parser.add_argument("--trim-end", type=_number("--trim-end must be a number of seconds."),
+                        help="convert up to this position in seconds")
     parser.add_argument("--check", action="store_true", help="check dependencies and exit")
     parser.add_argument("--capabilities", action="store_true",
                         help="report which output formats this FFmpeg can write, as JSON, and exit")
@@ -134,18 +150,8 @@ def main(argv=None):
         if args.preview:
             if not args.preview_output:
                 raise OmaConvertError("--preview-output is required with --preview.")
-            try:
-                edge = int(args.preview_size)
-            except (TypeError, ValueError):
-                raise OmaConvertError("Preview size must be a number of pixels, for example 320.")
-            position = None
-            if args.preview_position is not None:
-                try:
-                    position = float(args.preview_position)
-                except (TypeError, ValueError):
-                    raise OmaConvertError("Preview position must be a number of seconds.")
             preview = generate_preview(runner, args.preview, args.preview_output,
-                                       max_edge=edge, position=position)
+                                       max_edge=args.preview_size, position=args.preview_position)
             sink.emit("preview", **preview)
             return 0
         # The window sends --batch: what is left of a selection may be one file.
@@ -164,26 +170,9 @@ def main(argv=None):
             requested_bytes = parse_size(args.max_size) if args.max_size else None
         except ValueError as exc:
             raise OmaConvertError(str(exc)) from exc
-        trim_start, trim_end = None, None
-        for label, raw in (("--trim-start", args.trim_start), ("--trim-end", args.trim_end)):
-            if raw is None:
-                continue
-            try:
-                value = float(raw)
-            except (TypeError, ValueError):
-                raise OmaConvertError(f"{label} must be a number of seconds.")
-            if label == "--trim-start":
-                trim_start = value
-            else:
-                trim_end = value
-        sequence_fps = None
-        if args.sequence_fps is not None:
-            if not args.sequence:
-                raise OmaConvertError("--sequence-fps needs --sequence.")
-            try:
-                sequence_fps = float(args.sequence_fps)
-            except (TypeError, ValueError):
-                raise OmaConvertError("--sequence-fps must be a number of frames per second.")
+        trim_start, trim_end, sequence_fps = args.trim_start, args.trim_end, args.sequence_fps
+        if sequence_fps is not None and not args.sequence:
+            raise OmaConvertError("--sequence-fps needs --sequence.")
         if batch:
             if trim_start is not None or trim_end is not None:
                 raise OmaConvertError("Trimming applies to one video at a time.")

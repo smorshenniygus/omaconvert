@@ -7,6 +7,9 @@ import shutil
 from .color import chain, sdr_filter
 from .errors import OmaConvertError
 from .optimizer import size_text
+from .tuning import (
+    MIN_BITS_PER_PIXEL, MIN_VIDEO_BITRATE, SIZE_HEADROOM, TARGET_AUDIO_RATE, VIDEO_RATE_SHARE,
+)
 
 
 def parse_ffmpeg_progress(line, duration):
@@ -151,12 +154,10 @@ def encode_gif(runner, input_path, output, profile, duration, workdir, samples=N
     return output.stat().st_size
 
 
-# Short side of a target-size video, largest first. Measured with VMAF on real
-# 1080p footage (x264 two-pass): for a given bitrate the best-looking output is
-# the largest of these that still gets about 0.055 bits per pixel. Bigger
-# starves every pixel, smaller throws detail away.
+# Short side of a target-size video, largest first. For a given bitrate the
+# best-looking output is the largest of these that still gets
+# MIN_BITS_PER_PIXEL. Bigger starves every pixel, smaller throws detail away.
 _SHORT_SIDES = (2160, 1440, 1080, 720, 540, 480, 360, 240)
-_MIN_BITS_PER_PIXEL = 0.055
 
 
 def _video_shape(info, video_rate=None, fps=None):
@@ -168,7 +169,7 @@ def _video_shape(info, video_rate=None, fps=None):
         sides = [short] + [side for side in _SHORT_SIDES if side < short]
         for side in sides:
             other = round(long * side / short)
-            if video_rate / (side * other * (fps or info.fps)) >= _MIN_BITS_PER_PIXEL:
+            if video_rate / (side * other * (fps or info.fps)) >= MIN_BITS_PER_PIXEL:
                 break
         width, height = (other, side) if width >= height else (side, other)
     return max(2, width // 2 * 2), max(2, height // 2 * 2)
@@ -249,7 +250,7 @@ def encode_image_target(runner, input_path, output, info, fmt, requested_bytes, 
     scales = (1.0, 0.85, 0.7, 0.55, 0.4, 0.3, 0.2, 0.12, 0.06)
     qualities = (95, 90, 84, 76, 66, 54, 42, 30, 20)
     runner.sink.emit("analyzing", progress=0.0, target_bytes=requested_bytes,
-                     internal_target_bytes=int(requested_bytes * 0.97))
+                     internal_target_bytes=int(requested_bytes * SIZE_HEADROOM))
     smallest = None
     for number, (scale, quality) in enumerate(zip(scales, qualities), 1):
         width, height = _image_dimensions(info, scale)
@@ -287,6 +288,30 @@ def encode_image_target(runner, input_path, output, info, fmt, requested_bytes, 
 _VP9_THREADS = ("-row-mt", "1")
 
 
+def _video_codec(fmt, video, audio_rate, vp9_speed=()):
+    """Codec arguments for a video file: H.264 + AAC for mp4/mov/mkv, VP9 +
+    Opus for WebM. `video` is the rate control (CRF or bitrate and pass);
+    8-bit 4:2:0 whatever the source (10-bit phone clips, 4:4:4 screen
+    recordings): High 10/4:4:4 H.264 and VP9 profile 1/2 do not play in
+    browsers and chat apps. Returns (video args, audio args)."""
+    if fmt in ("mp4", "mov", "mkv"):
+        video_args = ["-c:v", "libx264", "-preset", "medium", *video, "-pix_fmt", "yuv420p"]
+        audio_args = ["-c:a", "aac", "-b:a", str(audio_rate)]
+        if fmt in ("mp4", "mov"):
+            audio_args += ["-movflags", "+faststart"]
+    else:
+        video_args = ["-c:v", "libvpx-vp9", *_VP9_THREADS, *vp9_speed, *video, "-pix_fmt", "yuv420p"]
+        audio_args = ["-c:a", "libopus", "-b:a", str(audio_rate)]
+    return video_args, audio_args
+
+
+def _audio_trim(info, input_seek, seek, clip):
+    """-af for sources trimmed in the filter graph instead of by seeking."""
+    if info.audio and not input_seek and (seek or clip is not None):
+        return ["-af", _trim_filter(input_seek, seek, clip, audio=True)]
+    return []
+
+
 def encode_video_quick(runner, input_path, output, info, fmt, preset, seek=0.0, clip=None):
     settings = {
         "small": (480, 28, 36),
@@ -302,24 +327,15 @@ def encode_video_quick(runner, input_path, output, info, fmt, preset, seek=0.0, 
     common = _input_args(input_path, seek, clip, input_seek) + ["-vf", vf,
               "-map", f"0:{info.stream_index}", "-map", "0:a:0?", "-progress", "pipe:1"]
     if fmt in ("mp4", "mov", "mkv"):
-        codec = ["-c:v", "libx264", "-preset", "medium", "-crf", str(crf),
-                 "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k"]
-        if fmt in ("mp4", "mov"):
-            codec += ["-movflags", "+faststart"]
+        video, audio = _video_codec(fmt, ["-crf", str(crf)], "128k")
     else:
-        codec = ["-c:v", "libvpx-vp9", *_VP9_THREADS, "-crf", str(crf + 4), "-b:v", "0",
-                 "-pix_fmt", "yuv420p", "-c:a", "libopus", "-b:a", "96k"]
-    if info.audio and not input_seek and (seek or clip is not None):
-        codec += ["-af", _trim_filter(input_seek, seek, clip, audio=True)]
+        video, audio = _video_codec(fmt, ["-crf", str(crf + 4), "-b:v", "0"], "96k")
+    codec = video + audio + _audio_trim(info, input_seek, seek, clip)
     progress_fields = {"pass": 1, "passes": 1, "width": width, "height": height, "fps": fps}
     runner.sink.emit("encoding", progress=0.0, **progress_fields)
     runner.ffmpeg(_base_ffmpeg() + common + codec + [str(output)], info.duration,
                   **progress_fields)
     return width, height, fps
-
-
-# Sound of a target-size video, budgeted before the video bitrate.
-TARGET_AUDIO_RATE = 96_000
 
 
 def encode_video_target(runner, input_path, output, info, fmt, internal_target, attempt=1,
@@ -330,8 +346,8 @@ def encode_video_target(runner, input_path, output, info, fmt, internal_target, 
     are reused and only the second pass runs again."""
     audio_rate = TARGET_AUDIO_RATE if info.audio else 0
     total_rate = internal_target * 8 / info.duration
-    video_rate = int(bitrate_override or ((total_rate - audio_rate) * 0.96))
-    if video_rate < 60_000:
+    video_rate = int(bitrate_override or ((total_rate - audio_rate) * VIDEO_RATE_SHARE))
+    if video_rate < MIN_VIDEO_BITRATE:
         raise OmaConvertError(
             "The requested size is too small for this video's duration.",
             "Try a larger target or a shorter clip.",
@@ -343,20 +359,10 @@ def encode_video_target(runner, input_path, output, info, fmt, internal_target, 
     input_seek = can_seek_input(info)
     vf = chain(_trim_filter(input_seek, seek, clip), f"fps={fps:.6g}",
                f"scale={width}:{height}:flags=lanczos", sdr_filter(info), "setsar=1")
-    # 8-bit 4:2:0 whatever the source (10-bit phone clips, 4:4:4 screen
-    # recordings): High 10/4:4:4 H.264 and VP9 profile 1/2 do not play in
-    # browsers and chat apps. Same in both passes so the pass log matches.
-    if fmt in ("mp4", "mov", "mkv"):
-        video_codec = ["-c:v", "libx264", "-preset", "medium", "-pix_fmt", "yuv420p"]
-        audio_codec = ["-c:a", "aac", "-b:a", str(TARGET_AUDIO_RATE)]
-        if fmt in ("mp4", "mov"):
-            audio_codec += ["-movflags", "+faststart"]
-    else:
-        video_codec = ["-c:v", "libvpx-vp9", *_VP9_THREADS, "-deadline", "good", "-cpu-used", "2",
-                       "-pix_fmt", "yuv420p"]
-        audio_codec = ["-c:a", "libopus", "-b:a", str(TARGET_AUDIO_RATE)]
-    if info.audio and not input_seek and (seek or clip is not None):
-        audio_codec += ["-af", _trim_filter(input_seek, seek, clip, audio=True)]
+    # Same codec arguments in both passes so the pass log matches.
+    video_codec, audio_codec = _video_codec(fmt, [], TARGET_AUDIO_RATE,
+                                            vp9_speed=("-deadline", "good", "-cpu-used", "2"))
+    audio_codec += _audio_trim(info, input_seek, seek, clip)
     first = _base_ffmpeg() + _input_args(input_path, seek, clip, input_seek) + ["-map", f"0:{info.stream_index}", "-vf", vf,
         *video_codec, "-b:v", str(video_rate), "-pass", "1", "-passlogfile", passlog,
         "-an", "-f", "null", "-progress", "pipe:1", os.devnull]

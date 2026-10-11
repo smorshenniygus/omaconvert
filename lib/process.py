@@ -8,14 +8,7 @@ import threading
 import time
 
 from .errors import Cancelled, ProcessFailed
-
-# Probing and previews are bounded single reads: minutes of silence mean the
-# tool hung (network mount, broken decoder), not a slow but healthy job.
-PROBE_TIMEOUT = 120.0
-# FFmpeg encodes report progress continuously; if the reported position does
-# not advance for this long, the encoder is considered stuck. Override with
-# OMACONVERT_STALL_TIMEOUT (seconds, 0 disables) for unusual hardware.
-DEFAULT_STALL_TIMEOUT = 300.0
+from .tuning import DEFAULT_STALL_TIMEOUT, PROBE_TIMEOUT  # noqa: F401  (re-exported)
 
 
 _PR_SET_PDEATHSIG = 1
@@ -183,15 +176,26 @@ class ProcessRunner:
                 message = "Conversion failed because the destination is not writable."
             raise ProcessFailed(message, details)
 
-    def capture(self, args, message, timeout=None):
-        """Run a tool to completion; `timeout` bounds its total wall time."""
+    def _run(self, args, message, limit, on_line=None):
+        """Start `args`, keep a bounded stderr tail, stop the tool once nothing
+        happened for `limit` seconds, and turn failures into errors.
+
+        Without `on_line` stdout is collected and returned, and `limit`
+        bounds the total wall time. With it every stdout line is passed on;
+        a line for which it returns True counts as activity."""
         process = self._start(args)
         stderr_tail = _TailBuffer()
         thread = threading.Thread(target=_drain_tail, args=(process.stderr, stderr_tail), daemon=True)
         thread.start()
-        started = time.monotonic()
-        self._watch(process, timeout, lambda: started)
-        stdout = process.stdout.read()
+        activity = [time.monotonic()]
+        self._watch(process, limit, lambda: activity[0])
+        stdout = None
+        if on_line is None:
+            stdout = process.stdout.read()
+        else:
+            for line in process.stdout:
+                if on_line(line.strip()):
+                    activity[0] = time.monotonic()
         process.wait()
         thread.join()
         process.stdout.close()
@@ -199,34 +203,31 @@ class ProcessRunner:
         self._finish(process, stderr_tail.value, message)
         return stdout
 
+    def capture(self, args, message, timeout=None):
+        """Run a tool to completion; `timeout` bounds its total wall time."""
+        return self._run(args, message, timeout)
+
     def ffmpeg(self, args, duration, stage="encoding", stall=None, **event_fields):
         """Run an FFmpeg encode with -progress; stop it if progress stalls."""
         from .encoders import parse_ffmpeg_progress
-        process = self._start(args)
-        stderr_tail = _TailBuffer()
-        thread = threading.Thread(target=_drain_tail, args=(process.stderr, stderr_tail), daemon=True)
-        thread.start()
-        activity = [time.monotonic()]
         seen = {}
-        self._watch(process, stall_timeout() if stall is None else stall, lambda: activity[0])
-        last_progress = -1.0
-        for line in process.stdout:
-            line = line.strip()
+        last_progress = [-1.0]
+
+        def on_line(line):
             # Any advance counts, not only the share of `duration`: an
             # animation without a known duration still reports frames.
             key, _, value = line.partition("=")
-            if key in _ADVANCING and seen.get(key) != value:
+            advanced = key in _ADVANCING and seen.get(key) != value
+            if advanced:
                 seen[key] = value
-                activity[0] = time.monotonic()
             progress = parse_ffmpeg_progress(line, duration)
-            if progress is not None and (progress >= 1 or progress - last_progress >= 0.01):
-                last_progress = progress
+            if progress is not None and (progress >= 1 or progress - last_progress[0] >= 0.01):
+                last_progress[0] = progress
                 self.sink.emit(stage, progress=progress, **event_fields)
-        process.wait()
-        thread.join()
-        process.stdout.close()
-        process.stderr.close()
-        self._finish(process, stderr_tail.value, "FFmpeg could not convert this media.")
+            return advanced
+
+        self._run(args, "FFmpeg could not convert this media.",
+                  stall_timeout() if stall is None else stall, on_line)
 
 
 class _TailBuffer:
