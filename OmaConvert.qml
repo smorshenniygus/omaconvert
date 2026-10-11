@@ -65,7 +65,6 @@ Item {
         bodySmall: root.fonts.bodySmall
         caption: root.fonts.caption
     }
-    property real clock: Date.now()
     function open(payloadJson) {
         closingFromHost = false
         opened = true
@@ -141,6 +140,26 @@ Item {
         root.clipboardStatus = ""
         preview.clearAll()
         choose.forceActiveFocus()
+    }
+    // What the result screen offers: its rows, their keys and the key bar
+    // hints all come from this list. The first action is the primary one.
+    readonly property var resultActions: {
+        var result = service.result
+        if (!result) return []
+        if (service.isBatch) return [
+            { key: "⏎", hint: "folder", glyph: "󰉋", label: "Open the folder", run: () => Qt.openUrlExternally(Model.fileUri(root.session.batchFolder())) },
+            { key: "c", hint: "copy all", glyph: "󰆏", label: "Copy all files to clipboard", run: () => root.copy(result.paths.map(p => Model.fileUri(p)).join("\r\n") + "\r\n", true) },
+            { key: "p", hint: "paths", glyph: "󰅍", label: "Copy all paths", run: () => root.copy(result.paths.join("\n"), false) },
+            { key: "n", hint: "more", glyph: "󰐕", label: "Convert more", run: () => root.convertAnother() }
+        ]
+        var sequence = result.kind === "sequence"
+        return [
+            { key: "⏎", hint: "open", glyph: "󰈔", label: sequence ? "Open frames" : "Open file", run: () => Qt.openUrlExternally(Model.fileUri(result.path)) },
+            { key: "o", hint: "folder", glyph: "󰉋", label: "Show in folder", run: () => root.openResultFolder() },
+            { key: "c", hint: "copy", glyph: "󰆏", label: sequence ? "Copy folder to clipboard" : "Copy file to clipboard", run: () => root.copy(Model.fileUri(result.path) + "\r\n", true) },
+            { key: "p", hint: "path", glyph: "󰅍", label: "Copy path", run: () => root.copy(result.path, false) },
+            { key: "n", hint: "another", glyph: "󰐕", label: "Convert another", run: () => root.convertAnother() }
+        ]
     }
     function openResultFolder() {
         var path = service.result ? service.result.path : ""
@@ -327,21 +346,21 @@ Item {
                     }
                 }
             }
-            Shortcut { sequences: ["Return", "Enter"]; enabled: root.session.screen === "result"; context: Qt.WindowShortcut; onActivated: Qt.openUrlExternally(Model.fileUri(service.isBatch ? root.session.batchFolder() : service.result.path)) }
-            Shortcut { sequence: "O"; enabled: root.session.screen === "result"; context: Qt.WindowShortcut; onActivated: root.openResultFolder() }
-            Shortcut { sequence: "C"; enabled: root.session.screen === "result"; context: Qt.WindowShortcut
-                       onActivated: service.isBatch ? root.copy(service.result.paths.map(p => Model.fileUri(p)).join("\r\n") + "\r\n", true)
-                                                    : root.copy(Model.fileUri(service.result.path) + "\r\n", true) }
-            Shortcut { sequence: "P"; enabled: root.session.screen === "result"; context: Qt.WindowShortcut
-                       onActivated: root.copy(service.isBatch ? service.result.paths.join("\n") : service.result.path, false) }
-            Shortcut { sequence: "Ctrl+D"; enabled: root.session.screen === "recipes" || root.session.screen === "settings"; context: Qt.WindowShortcut; onActivated: root.session.togglePin() }
-            Shortcut { sequence: "N"; enabled: root.session.screen === "result"; context: Qt.WindowShortcut; onActivated: root.convertAnother() }
-            Timer {
-                interval: 1000
-                repeat: true
-                running: service.busy
-                onTriggered: root.clock = Date.now()
+            // Result keys: the same list as the action rows and the key bar.
+            Repeater {
+                model: root.resultActions
+                delegate: Item {
+                    id: resultKey
+                    required property var modelData
+                    Shortcut {
+                        sequences: resultKey.modelData.key === "⏎" ? ["Return", "Enter"] : [resultKey.modelData.key.toUpperCase()]
+                        enabled: root.session.screen === "result"
+                        context: Qt.WindowShortcut
+                        onActivated: resultKey.modelData.run()
+                    }
+                }
             }
+            Shortcut { sequence: "Ctrl+D"; enabled: root.session.screen === "recipes" || root.session.screen === "settings"; context: Qt.WindowShortcut; onActivated: root.session.togglePin() }
 
             ColumnLayout {
                 anchors.fill: parent
@@ -470,174 +489,11 @@ Item {
                             }
                         }
 
-                        // ── Converting ────────────────────────────────────
-                        ColumnLayout {
-                            visible: root.session.screen === "converting"
-                            Layout.fillWidth: true
-                            spacing: 16
-                            PreviewImage {
-                                Layout.fillWidth: true
-                                visible: !service.isBatch
-                                title: "Source"
-                                showHeader: false
-                                boxHeight: 200
-                                dimmed: 0.55
-                                imageSource: preview.sourceUrl
-                                loading: preview.sourceLoading
-                                theme: root.theme
-                            }
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: 4
-                                MonoText {
-                                    theme: root.theme
-                                    size: 0.917
-                                    Layout.fillWidth: true
-                                    text: (service.isBatch ? root.session.batchReady.length + " files" : Model.name(service.inputPath)) + "  →  " + root.session.jobCommand
-                                    color: root.theme.dim
-                                    elide: Text.ElideMiddle
-                                }
-                                MonoText {
-                                    theme: root.theme
-                                    size: 1.5
-                                    Layout.fillWidth: true
-                                    text: service.cancelling ? "Cancelling…"
-                                        : service.isBatch ? "File " + Math.min(root.session.batchReady.length, root.session.batchFinished + 1) + " of " + root.session.batchReady.length
-                                        : (service.phase.indexOf("Finding") === 0 ? "Finding the best quality that fits" : service.phase)
-                                    font.bold: true
-                                    wrapMode: Text.WordWrap
-                                }
-                            }
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: 6
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    MonoText {
-                                        theme: root.theme
-                                        size: 0.917
-                                        Layout.fillWidth: true
-                                        text: service.isBatch ? (service.batchCurrent >= 0 ? Model.name(service.batch[service.batchCurrent].path) : "")
-                                            : service.currentPass ? "pass " + service.currentPass : (service.phase.indexOf("Finding") === 0 ? "analysing samples" : "")
-                                        color: root.theme.mist
-                                        font.bold: true
-                                    }
-                                    Text {
-                                        visible: !progressTrack.indeterminate
-                                        text: Math.round((service.isBatch ? root.session.batchProgress : service.progress) * 100) + "%"
-                                        color: root.theme.fg
-                                        font.family: root.theme.family
-                                        font.pixelSize: root.theme.px(0.917)
-                                        font.bold: true
-                                    }
-                                }
-                                Rectangle {
-                                    id: progressTrack
-                                    readonly property bool indeterminate: !service.isBatch && service.phase.indexOf("Finding") === 0
-                                    Layout.fillWidth: true
-                                    implicitHeight: 6
-                                    color: root.theme.alpha(root.theme.fg, 0.08)
-                                    clip: true
-                                    Rectangle {
-                                        visible: !progressTrack.indeterminate
-                                        height: parent.height
-                                        color: root.theme.focus
-                                        width: parent.width * Math.max(0, Math.min(1, service.isBatch ? root.session.batchProgress : service.progress))
-                                        Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                                    }
-                                    Rectangle {
-                                        id: sweep
-                                        visible: progressTrack.indeterminate
-                                        height: parent.height
-                                        color: root.theme.focus
-                                        width: parent.width * 0.3
-                                        NumberAnimation on x {
-                                            running: sweep.visible && service.busy
-                                            from: -sweep.width
-                                            to: progressTrack.width
-                                            duration: 1200
-                                            loops: Animation.Infinite
-                                            easing.type: Easing.InOutQuad
-                                        }
-                                    }
-                                }
-                            }
-                            // Every size the search measured, against the limit.
-                            ColumnLayout {
-                                id: candList
-                                Layout.fillWidth: true
-                                visible: service.candidates.length > 0
-                                spacing: 8
-                                readonly property real span: Math.max(root.session.jobLimitBytes * 1.39,
-                                    Math.max.apply(null, service.candidates.map(c => c.estimated_bytes || 0)), 1)
-                                SectionLabel { theme: root.theme; text: "CANDIDATES" }
-                                Repeater {
-                                    model: service.candidates
-                                    delegate: ColumnLayout {
-                                        id: cand
-                                        required property var modelData
-                                        readonly property real bytes: cand.modelData.estimated_bytes || 0
-                                        readonly property bool fits: root.session.jobLimitBytes <= 0 || cand.bytes <= root.session.jobLimitBytes
-                                        Layout.fillWidth: true
-                                        spacing: 4
-                                        RowLayout {
-                                            Layout.fillWidth: true
-                                            MonoText {
-                                                theme: root.theme
-                                                size: 0.917
-                                                Layout.fillWidth: true
-                                                text: cand.modelData.width + "×" + cand.modelData.height
-                                                      + (cand.modelData.fps ? "  ·  " + Number(cand.modelData.fps).toFixed(1).replace(".0", "") + " fps" : "")
-                                                      + (cand.modelData.colors ? "  ·  " + cand.modelData.colors + " col" : "")
-                                                elide: Text.ElideRight
-                                            }
-                                            MonoText {
-                                                theme: root.theme
-                                                size: 0.917
-                                                text: "≈ " + Model.compactSize(cand.bytes)
-                                                color: cand.fits ? root.theme.mist : root.theme.urgent
-                                                font.bold: true
-                                            }
-                                        }
-                                        Item {
-                                            Layout.fillWidth: true
-                                            implicitHeight: 10
-                                            Rectangle { anchors.verticalCenter: parent.verticalCenter; width: parent.width; height: 4; color: root.theme.alpha(root.theme.fg, 0.06) }
-                                            Rectangle {
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                height: 4
-                                                width: parent.width * Math.min(1, cand.bytes / candList.span)
-                                                color: cand.fits ? root.theme.sage : root.theme.urgent
-                                            }
-                                            Rectangle {
-                                                visible: root.session.jobLimitBytes > 0
-                                                x: parent.width * root.session.jobLimitBytes / candList.span
-                                                width: 1
-                                                height: 10
-                                                color: root.theme.fg
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Layout.topMargin: 6
-                                MonoText {
-                                    theme: root.theme
-                                    size: 0.917
-                                    Layout.fillWidth: true
-                                    text: Model.duration(Math.max(0, (root.clock - service.startedAt) / 1000)) + " elapsed"
-                                    color: root.theme.faint
-                                }
-                                TextButton {
-                                    theme: root.theme
-                                    key: "esc"
-                                    label: service.cancelling ? "cancelling…" : "cancel"
-                                    enabled: !service.cancelling
-                                    onClicked: service.cancel()
-                                }
-                            }
+                        ConvertingView {
+                            theme: root.theme
+                            session: root.session
+                            service: root.convertService
+                            preview: root.previewService
                         }
                         // Reading a file: the phase on its own.
                         Hint {
@@ -663,66 +519,15 @@ Item {
                             limitBytes: root.session.jobLimitBytes
                             theme: root.theme
                         }
-                        // Batch summary: the sizes before and after, what failed.
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            visible: root.session.screen === "result" && service.isBatch
-                            spacing: 4
-                            RowLayout {
-                                spacing: 10
-                                MonoText {
-                                    theme: root.theme
-                                    size: 3.6
-                                    text: service.result ? Model.compactSize(service.result.bytes_after) : ""
-                                    font.bold: true
-                                }
-                                Rectangle {
-                                    Layout.alignment: Qt.AlignBottom
-                                    Layout.bottomMargin: 8
-                                    implicitWidth: batchBadge.implicitWidth + 16
-                                    implicitHeight: batchBadge.implicitHeight + 6
-                                    color: root.theme.alpha(root.theme.sage, 0.22)
-                                    border.width: 1
-                                    border.color: root.theme.sage
-                                    MonoText {
-                                        id: batchBadge
-                                        theme: root.theme
-                                        size: 0.917
-                                        anchors.centerIn: parent
-                                        text: service.result ? "✓ " + service.result.done + " of " + service.result.total + " done" : ""
-                                        color: root.theme.mist
-                                        font.bold: true
-                                    }
-                                }
-                            }
-                            MonoText {
-                                theme: root.theme
-                                size: 0.917
-                                Layout.fillWidth: true
-                                text: service.result ? Model.savingsText(service.result.bytes_before, service.result.bytes_after)
-                                    + (service.result.failed ? "  ·  " + service.result.failed + " failed" : "") : ""
-                                color: service.result && service.result.failed ? root.theme.urgent : root.theme.faint
-                                wrapMode: Text.WordWrap
-                            }
+                        BatchSummary {
+                            theme: root.theme
+                            session: root.session
+                            service: root.convertService
                         }
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            visible: root.session.screen === "result" && service.isBatch
-                            spacing: 0
-                            ActionRow { theme: root.theme; primary: true; glyph: "󰉋"; key: "⏎"; label: "Open the folder"; onTriggered: Qt.openUrlExternally(Model.fileUri(root.session.batchFolder())) }
-                            ActionRow { theme: root.theme; glyph: "󰆏"; key: "c"; label: "Copy all files to clipboard"; onTriggered: root.copy(service.result.paths.map(p => Model.fileUri(p)).join("\r\n") + "\r\n", true) }
-                            ActionRow { theme: root.theme; glyph: "󰅍"; key: "p"; label: "Copy all paths"; onTriggered: root.copy(service.result.paths.join("\n"), false) }
-                            ActionRow { theme: root.theme; glyph: "󰐕"; key: "n"; label: "Convert more"; onTriggered: root.convertAnother() }
-                        }
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            visible: root.session.screen === "result" && !service.isBatch
-                            spacing: 0
-                            ActionRow { theme: root.theme; primary: true; glyph: "󰈔"; key: "⏎"; label: service.result && service.result.kind === "sequence" ? "Open frames" : "Open file"; onTriggered: Qt.openUrlExternally(Model.fileUri(service.result.path)) }
-                            ActionRow { theme: root.theme; glyph: "󰉋"; key: "o"; label: "Show in folder"; onTriggered: root.openResultFolder() }
-                            ActionRow { theme: root.theme; glyph: "󰆏"; key: "c"; label: service.result && service.result.kind === "sequence" ? "Copy folder to clipboard" : "Copy file to clipboard"; onTriggered: root.copy(Model.fileUri(service.result.path) + "\r\n", true) }
-                            ActionRow { theme: root.theme; glyph: "󰅍"; key: "p"; label: "Copy path"; onTriggered: root.copy(service.result.path, false) }
-                            ActionRow { theme: root.theme; glyph: "󰐕"; key: "n"; label: "Convert another"; onTriggered: root.convertAnother() }
+                        ResultActions {
+                            visible: root.session.screen === "result"
+                            theme: root.theme
+                            actions: root.resultActions
                         }
 
                         // ── Status ────────────────────────────────────────
@@ -788,7 +593,7 @@ Item {
                 KeyBar {
                     theme: root.theme
                     session: root.session
-                    service: root.convertService
+                    resultKeys: root.resultActions.map(action => [action.key, action.hint])
                 }
             }
         }

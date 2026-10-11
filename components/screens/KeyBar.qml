@@ -9,7 +9,8 @@ Rectangle {
     id: root
     required property Theme theme
     required property Session session
-    required property ConvertService service
+    // [key, hint] pairs for the result screen, from the window's actions.
+    property var resultKeys: []
     Layout.fillWidth: true
     implicitHeight: keyRow.implicitHeight + 14
     color: root.theme.alpha(root.theme.fg, 0.03)
@@ -26,8 +27,7 @@ Rectangle {
                 recipes: [["↑↓", "choose"], ["⏎", "convert"], ["alt " + (root.session.matched.rows.length > 1 ? "1–" + Math.min(9, root.session.matched.rows.length) : "1"), "pick"], ["ctrl d", root.session.activePinned ? "unpin" : "pin"], ["ctrl ,", "settings"]],
                 settings: [["tab", "next field"], ["←→", "choose"], ["ctrl d", root.session.activePinned ? "unpin" : "pin"], ["ctrl ⏎", "convert"]],
                 converting: [],
-                result: root.service.isBatch ? [["⏎", "folder"], ["c", "copy all"], ["p", "paths"], ["n", "more"]]
-                    : [["⏎", "open"], ["o", "folder"], ["c", "copy"], ["p", "path"], ["n", "another"]]
+                result: root.resultKeys
             })[root.session.screen] || []
             delegate: Row {
                 id: keyHint
