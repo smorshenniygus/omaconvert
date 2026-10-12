@@ -16,6 +16,8 @@ import re
 import shutil
 import subprocess
 
+from .publish import replace_text
+
 
 @dataclass(frozen=True)
 class Format:
@@ -171,18 +173,12 @@ def _write_disk_cache(key, tools):
     data[key] = {"encoders": sorted(tools.encoders), "muxers": sorted(tools.muxers),
                  "filters": sorted(tools.filters)}
     data = dict(list(data.items())[-_DISK_ENTRIES:])
-    temp = f"{path}.{os.getpid()}.tmp"
     old = os.umask(0o077)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(temp, "w", encoding="utf-8") as handle:
-            json.dump(data, handle)
-        os.replace(temp, path)
+        replace_text(path, json.dumps(data), 0o600)
     except OSError:
-        try:
-            os.unlink(temp)
-        except OSError:
-            pass
+        pass
     finally:
         os.umask(old)
 

@@ -15,6 +15,26 @@ _LOCK = ".lock"
 _NO_HARDLINKS = {errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.ENOSYS}
 
 
+def replace_text(target, text, mode):
+    """Atomically replace the file `target` with `text`, ending with `mode`.
+    The temporary file is created private (0600, O_EXCL, a random name in
+    the target's folder) before any byte is written; it gets `mode` only
+    once it holds the new content, so a private file is never readable by
+    others, not even for a moment."""
+    target = Path(target)
+    fd, temp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".omaconvert-tmp", dir=target.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+            os.fchmod(handle.fileno(), mode & 0o777)
+        os.replace(temp, target)
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)
+        raise
+
+
 @contextmanager
 def work_directory(parent):
     """A hidden working folder in `parent`, on the result's filesystem so

@@ -14,6 +14,7 @@ import time
 from urllib.parse import unquote, urlparse
 
 from .launcher import PLUGIN_ID, ROOT
+from .publish import replace_text
 from .tuning import (OFFER_ABOVE_BYTES, PASTE_IMAGE_BYTES, PASTE_LIST_BYTES, PASTE_TEXT_BYTES,
                      PASTE_TIMEOUT)
 
@@ -205,10 +206,7 @@ def set_hotkey(enabled):
     # Replace the file a symlinked bindings.lua (stow, dotfile repos) points
     # to, so the link survives instead of becoming a plain file.
     target = path.resolve()
-    temp = target.with_name(f".{target.name}.omaconvert-tmp")
-    temp.write_text(text, encoding="utf-8")
-    temp.chmod(target.stat().st_mode & 0o777)
-    temp.replace(target)
+    replace_text(target, text, target.stat().st_mode)
     if shutil.which("hyprctl"):
         _run(["hyprctl", "reload"])
     return hotkey_status()

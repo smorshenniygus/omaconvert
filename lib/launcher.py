@@ -13,6 +13,7 @@ import shutil
 import subprocess
 
 from .formats import INPUT_MIME_TYPES
+from .publish import replace_text
 
 ROOT = Path(__file__).resolve().parents[1]
 # The manifest is the only place the plugin id is written down.
@@ -155,10 +156,7 @@ def set_open_with(enabled):
     if enabled:
         path.parent.mkdir(parents=True, exist_ok=True)
         text = render_desktop_entry(TEMPLATE.read_text(encoding="utf-8"), ROOT / "bin" / "omaconvert-open")
-        temp = path.with_name(f".{path.name}.tmp")
-        temp.write_text(text, encoding="utf-8")
-        temp.chmod(0o644)
-        temp.replace(path)
+        replace_text(path, text, 0o644)
     else:
         path.unlink(missing_ok=True)
     _refresh_database(path.parent)

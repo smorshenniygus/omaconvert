@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "bin" / "omaconvert"
@@ -199,6 +200,26 @@ else:
         self.run_cli("--hotkey", "off")
         self.assertTrue(self.bindings.is_symlink())
         self.assertEqual(dotfiles.read_text(), self.original)
+
+    def test_private_bindings_are_never_readable_by_others(self):
+        # Every step of the rewrite stays owner-only for an owner-only file:
+        # the temporary copy is created 0600 before any byte is written.
+        self.bindings.chmod(0o600)
+        seen = []
+        real_fdopen = os.fdopen
+
+        def watching_fdopen(fd, *args, **kwargs):
+            seen.append(stat.S_IMODE(os.fstat(fd).st_mode))
+            return real_fdopen(fd, *args, **kwargs)
+
+        sys.path.insert(0, str(ROOT))
+        from lib import desktop, publish
+        with mock.patch.dict(os.environ, self.env), mock.patch.object(publish.os, "fdopen", watching_fdopen):
+            desktop.set_hotkey(True)
+        self.assertEqual(seen, [0o600])
+        self.assertIn("OmaConvert hotkey", self.bindings.read_text())
+        self.assertEqual(stat.S_IMODE(self.bindings.stat().st_mode), 0o600)
+        self.assertEqual([p.name for p in self.bindings.parent.iterdir()], ["bindings.lua"], "no temporary file left")
 
     def test_off_without_a_block_leaves_the_file_and_hyprland_alone(self):
         self.hypr([])
