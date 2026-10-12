@@ -37,9 +37,11 @@ ShellRoot {
         send({ event: "encoding", index: 0, progress: 0.5 })
         send({ event: "candidate", index: 0, width: 10, height: 10, estimated_bytes: 5, progress: 0.6 })
         send({ event: "encoding", index: 1, progress: 0.25 })
-        var ok = rows.itemAt(0).progress === 0.6 && rows.itemAt(1).progress === 0.25 && rows.itemAt(2).status === "queued"
+        send({ event: "encoding", index: 1, progress: 0.1 })
+        // A row never moves back: 0.1 after 0.25 keeps 0.25.
+        var ok = rows.itemAt(0).progress === 0.5 && rows.itemAt(1).progress === 0.25 && rows.itemAt(2).status === "queued"
         if (!ok) { fail("row progress " + rows.itemAt(0).progress + " " + rows.itemAt(1).progress); return false }
-        if (service.progress !== 0.25 || service.candidates.length !== 0) { fail("screen followed an older file"); return false }
+        if (service.progress !== 0.1 || service.candidates.length !== 0) { fail("screen followed an older file"); return false }
         send({ event: "item-complete", index: 0, source: "/a.png", path: "/a.jpg", bytes: 3 })
         if (rows.itemAt(0).status !== "done" || rows.itemAt(0).progress !== 1 || rows.itemAt(1).status !== "working") { fail("completion"); return false }
         service.currentJob = null

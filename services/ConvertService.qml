@@ -224,6 +224,18 @@ Item {
         phase = "Cancelling…"
         if (currentJob) currentJob.stop()
     }
+    // One number for a whole file out of its stages: a size search fills
+    // the first 80 %, the encode (each pass a share) the rest. Never moves
+    // back, so a row does not jump between stages.
+    function fileProgress(event, row) {
+        var p = Math.max(0, Math.min(1, event.progress))
+        var searched = row.searched || event.event === "candidate"
+        if (event.event === "analyzing" || event.event === "candidate") return searched ? 0.8 * p : 0
+        if (event.event === "optimizing") return 0.95 + 0.05 * p
+        if (event.event !== "encoding") return 0
+        if (event.passes > 1 && event.pass >= 1) p = (event.pass - 1 + p) / event.passes
+        return searched ? 0.8 + 0.2 * p : p
+    }
     function receive(job, line) {
         if (!isCurrent(job)) return
         var event = Model.eventFromLine(line)
@@ -235,8 +247,10 @@ Item {
         // of a file carries its index: each row keeps its own progress, and
         // the converting screen follows the file started last.
         if (operation === "batch" && typeof event.index === "number" && event.event.indexOf("item") !== 0) {
-            if (!cancelling && typeof event.progress === "number")
-                updateBatch(batchIndexOf(event.index), { progress: Math.max(0, Math.min(1, event.progress)) })
+            var row = batchIndexOf(event.index)
+            if (!cancelling && row >= 0 && typeof event.progress === "number")
+                updateBatch(row, { progress: Math.max(batch[row].progress || 0, fileProgress(event, batch[row])),
+                                   searched: batch[row].searched || event.event === "candidate" })
             if (event.index !== batchOrderCurrent) return
         }
         // A conversion probes its input again; only a probe job describes a
