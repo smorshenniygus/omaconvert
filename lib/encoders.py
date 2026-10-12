@@ -353,6 +353,11 @@ def encode_image_target(runner, input_path, output, info, fmt, requested_bytes, 
 # multithreading made a 20 s 540p two-pass WebM 28% faster on 4 cores with
 # the same output size and SSIM.
 _VP9_THREADS = ("-row-mt", "1")
+# Speed of a target-size WebM. On a real 10 s 1080p clip, -cpu-used 4
+# instead of 2 made the second pass 42-45 % faster for 0.1-0.2 VMAF points
+# (far below a visible step) and a 4-6 % larger file, still under the
+# limit thanks to SIZE_HEADROOM. The first pass is fast at either setting.
+_VP9_TARGET_SPEED = ("-deadline", "good", "-cpu-used", "4")
 
 
 def _video_codec(fmt, video, audio_rate, vp9_speed=()):
@@ -428,7 +433,7 @@ def encode_video_target(runner, input_path, output, info, fmt, internal_target, 
                f"scale={width}:{height}:flags=lanczos", sdr_filter(info), "setsar=1")
     # Same codec arguments in both passes so the pass log matches.
     video_codec, audio_codec = _video_codec(fmt, [], TARGET_AUDIO_RATE,
-                                            vp9_speed=("-deadline", "good", "-cpu-used", "2"))
+                                            vp9_speed=_VP9_TARGET_SPEED)
     audio_codec += _audio_trim(info, input_seek, seek, clip)
     first = _base_ffmpeg() + _input_args(input_path, seek, clip, input_seek) + ["-map", f"0:{info.stream_index}", "-vf", vf,
         *video_codec, "-b:v", str(video_rate), "-pass", "1", "-passlogfile", passlog,
