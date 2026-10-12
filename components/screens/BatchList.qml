@@ -81,6 +81,7 @@ ColumnLayout {
                         required property bool ok
                         required property real bytes
                         required property real outputBytes
+                        required property real progress
                         required property string message
                         readonly property string phaseName: batchRow.status || "reading"
                         width: batchRows.width
@@ -113,7 +114,7 @@ ColumnLayout {
                                 theme: root.theme
                                 size: 0.833
                                 Layout.maximumWidth: batchRows.width * 0.48
-                                text: batchRow.phaseName === "working" ? Math.round(root.service.progress * 100) + "%"
+                                text: batchRow.phaseName === "working" ? Math.round(batchRow.progress * 100) + "%"
                                     : batchRow.phaseName === "done" ? Model.compactSize(batchRow.bytes) + "  →  " + Model.compactSize(batchRow.outputBytes)
                                     : batchRow.phaseName === "failed" || batchRow.phaseName === "skipped" ? (batchRow.message || batchRow.phaseName)
                                     : batchRow.phaseName === "stopped" ? "stopped"

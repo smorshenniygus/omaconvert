@@ -1,9 +1,11 @@
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import math
 import os
 from dataclasses import replace
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 
 from .color import sdr_filter
@@ -12,12 +14,13 @@ from .encoders import (
     encode_video_quick, encode_video_target,
 )
 from .errors import Cancelled, OmaConvertError
+from .events import ItemSink
 from . import formats
 from .formats import IMAGE_FORMATS, VIDEO_FORMATS
 from .optimizer import build_gif_profiles, representative_samples, size_text
 from .probe import probe_media
 from .publish import publish_folder_no_clobber, publish_no_clobber, work_directory
-from .tuning import RETRY_MARGIN, SIZE_HEADROOM, TARGET_AUDIO_RATE
+from .tuning import BATCH_IMAGE_JOBS, RETRY_MARGIN, SIZE_HEADROOM, TARGET_AUDIO_RATE
 
 
 
@@ -468,40 +471,64 @@ def probe_all(runner, inputs):
         runner.sink.emit("probe-item", index=index, ok=True, **info.event_fields())
 
 
+def batch_jobs(fmt, sequence=False):
+    """How many files of a batch to convert at once."""
+    if sequence or fmt == "gif" or fmt not in IMAGE_FORMATS:
+        return 1
+    return max(1, min(BATCH_IMAGE_JOBS, (os.cpu_count() or 1) - 1))
+
+
 def convert_batch(runner, inputs, fmt, requested_bytes, preset, preference,
-                  output_dir=None, sequence=False, sequence_fps=None):
-    """Convert several files with one recipe, one after another. A file that
-    fails is reported (item-error) and skipped; cancelling stops the batch.
-    Returns the summary for the final batch-complete event."""
+                  output_dir=None, sequence=False, sequence_fps=None, jobs=None):
+    """Convert several files with one recipe; still images several at a
+    time (`jobs`, see batch_jobs). Every event of a file carries its
+    `index`; item-complete and item-error arrive as files finish. A file
+    that fails is reported (item-error) and skipped; cancelling stops the
+    batch. Returns the summary for the final batch-complete event, with the
+    output paths in input order."""
     total = len(inputs)
-    done = failed = 0
-    before = after = 0
-    outputs = []
-    for index, raw in enumerate(inputs):
+    jobs = jobs or batch_jobs(fmt, sequence)
+
+    def one(index, raw):
         runner.check_cancelled()
         source = str(Path(raw).expanduser())
         runner.sink.emit("item", index=index, total=total, path=source)
+        item = runner.for_sink(ItemSink(runner.sink, index))
         try:
-            result = convert(runner, source, fmt, None, requested_bytes, preset, preference,
+            result = convert(item, source, fmt, None, requested_bytes, preset, preference,
                              output_dir=output_dir, sequence=sequence, sequence_fps=sequence_fps)
         except Cancelled:
             raise
         except OmaConvertError as exc:
-            failed += 1
             runner.sink.emit("item-error", index=index, source=source, message=exc.message, details=exc.details)
-            continue
+            return None
         except Exception as exc:  # one odd file must not end the batch
-            failed += 1
             runner.sink.emit("item-error", index=index, source=source,
                              message="OmaConvert could not convert this file.", details=str(exc))
-            continue
-        done += 1
-        before += Path(source).stat().st_size
-        after += int(result.get("bytes") or 0)
-        outputs.append(result["path"])
+            return None
         runner.sink.emit("item-complete", index=index, source=source, **result)
+        return source, result
+
+    if jobs == 1:
+        results = [one(index, raw) for index, raw in enumerate(inputs)]
+    else:
+        with ThreadPoolExecutor(max_workers=jobs, thread_name_prefix="batch") as pool:
+            futures = [pool.submit(one, index, raw) for index, raw in enumerate(inputs)]
+            try:
+                results = [future.result() for future in futures]
+            except BaseException:
+                # Cancelled (or worse): stop the tools still running and the
+                # files not started yet, then report it.
+                runner.cancel(runner.signal_number or signal.SIGTERM)
+                for future in futures:
+                    future.cancel()
+                raise
+    finished = [entry for entry in results if entry is not None]
+    done, failed = len(finished), total - len(finished)
     if done == 0:
         raise OmaConvertError("None of the files could be converted.", f"{failed} of {total} failed.")
+    outputs = [result["path"] for _, result in finished]
     return {"kind": "batch", "total": total, "done": done, "failed": failed,
-            "bytes_before": before, "bytes_after": after, "paths": outputs, "path": outputs[0]}
-
+            "bytes_before": sum(Path(source).stat().st_size for source, _ in finished),
+            "bytes_after": sum(int(result.get("bytes") or 0) for _, result in finished),
+            "paths": outputs, "path": outputs[0]}

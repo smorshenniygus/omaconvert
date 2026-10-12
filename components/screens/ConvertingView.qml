@@ -52,7 +52,9 @@ ColumnLayout {
             size: 1.5
             Layout.fillWidth: true
             text: root.service.cancelling ? "Cancelling…"
-                : root.service.isBatch ? "File " + Math.min(root.session.batchReady.length, root.session.batchFinished + 1) + " of " + root.session.batchReady.length
+                : root.service.isBatch ? (root.session.batchWorking.length > 1
+                    ? root.session.batchFinished + " of " + root.session.batchReady.length + " done  ·  " + root.session.batchWorking.length + " at once"
+                    : "File " + Math.min(root.session.batchReady.length, root.session.batchFinished + 1) + " of " + root.session.batchReady.length)
                 : (root.service.phase.indexOf("Finding") === 0 ? "Finding the best quality that fits" : root.service.phase)
             font.bold: true
             wrapMode: Text.WordWrap
@@ -67,10 +69,11 @@ ColumnLayout {
                 theme: root.theme
                 size: 0.917
                 Layout.fillWidth: true
-                text: root.service.isBatch ? (root.service.batchCurrent >= 0 ? Model.name(root.service.batch[root.service.batchCurrent].path) : "")
+                text: root.service.isBatch ? root.session.batchWorking.map(item => Model.name(item.path)).join("  ·  ")
                     : root.service.currentPass ? "pass " + root.service.currentPass : (root.service.phase.indexOf("Finding") === 0 ? "analysing samples" : "")
                 color: root.theme.mist
                 font.bold: true
+                elide: Text.ElideRight
             }
             Text {
                 visible: !progressTrack.indeterminate

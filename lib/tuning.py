@@ -22,6 +22,12 @@ TARGET_AUDIO_RATE = 96_000
 # a smaller frame with enough bits beats a large starved one.
 MIN_BITS_PER_PIXEL = 0.055
 
+# --- Batches --------------------------------------------------------------
+# Files of a still-image batch converted at once. A size search for one
+# image keeps about one core busy; video encoders already use every core,
+# so video and GIF batches stay one file at a time.
+BATCH_IMAGE_JOBS = 3
+
 # --- Process supervision -------------------------------------------------
 # Probing and previews are bounded single reads: minutes of silence mean the
 # tool hung (network mount, broken decoder), not a slow but healthy job.

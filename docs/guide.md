@@ -11,7 +11,7 @@ Everything the [README](../README.md) leaves out.
 3. **Pick a recipe**, or type in the `❯` line above the list. The size bar shows the source against the limit, so you see how much has to go.
 4. **⚙ settings** (Ctrl+,) opens every field: format, mode, max size with presets (Discord 10 MB, X GIF 15 MB, email 25 MB, web 500 KB), GIF preference, quick quality, frame rate for sequences and the output folder. The fields and the line stay in sync, and **Will make** shows the file name you will get.
 
-**Several files at once.** Select files in the file manager and use Open With, drop or paste several files, or pick several in the dialog. They open as a **batch**: one list with each file's size, one recipe for all of them, converted one after another. A file that cannot be read is marked and skipped, and files of the other kind (videos in a batch of images) are left out. Trimming is for one video at a time.
+**Several files at once.** Select files in the file manager and use Open With, drop or paste several files, or pick several in the dialog. They open as a **batch**: one list with each file's size, one recipe for all of them. Still images convert up to three at a time; videos and GIFs one after another, since their encoders already use every core. A file that cannot be read is marked and skipped, and files of the other kind (videos in a batch of images) are left out. Trimming is for one video at a time.
 
 **Pin the recipes you use.** Ctrl+D (or ★ pin next to Convert in the settings) pins the highlighted recipe, such as `jpg 150kb` for your website. Pinned recipes are listed first for that kind of file, up to six of them. Ctrl+D again unpins.
 
@@ -84,7 +84,7 @@ omaconvert *.png --format jpg --max-size 200KB --output-dir ~/Pictures/web   # a
 omaconvert --capabilities      # which formats this FFmpeg can write
 ```
 
-Every stdout line is a JSON event: `probe`, `analyzing`, `candidate`, `encoding`, `optimizing`, and finally `complete`, `error` or `cancelled`. The `complete` event carries the output path and measured size. Ctrl+C or SIGTERM stops the job and its encoders. A stalled encode is stopped after 300 seconds without progress; set `OMACONVERT_STALL_TIMEOUT` to change this, or to `0` to disable it.
+Every stdout line is a JSON event: `probe`, `analyzing`, `candidate`, `encoding`, `optimizing`, and finally `complete`, `error` or `cancelled`. The `complete` event carries the output path and measured size. A batch reports `item`, then `item-complete` or `item-error` for each file and ends with `batch-complete`, whose `paths` follow the input order. Every event of a file carries its `index`: files of an image batch run side by side and can finish in any order. Ctrl+C or SIGTERM stops the job and its encoders. A stalled encode is stopped after 300 seconds without progress; set `OMACONVERT_STALL_TIMEOUT` to change this, or to `0` to disable it.
 
 ## Development
 

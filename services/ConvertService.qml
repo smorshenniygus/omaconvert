@@ -48,6 +48,8 @@ Item {
     property string batchKind: ""
     readonly property bool isBatch: batch.length > 1
     property int batchCurrent: -1
+    // Input index (in batchOrder) of the batch file started last.
+    property int batchOrderCurrent: -1
     // Paths sent with the running batch, in order: event index -> entry.
     property var batchOrder: []
 
@@ -144,6 +146,7 @@ Item {
         result = null
         batchKind = ""
         batchCurrent = -1
+        batchOrderCurrent = -1
         replaceBatch(list.map(path => ({ path: path, status: "reading" })))
         phase = "Reading " + list.length + " files…"
         launch(["--probe-all"].concat(list), "probe-all")
@@ -154,7 +157,7 @@ Item {
     function batchRow(item) {
         return { path: item.path || "", status: item.status || "reading", ok: item.ok === true,
                  bytes: Number(item.bytes || 0), outputBytes: Number(item.outputBytes || 0),
-                 message: item.message || "" }
+                 progress: Number(item.progress || 0), message: item.message || "" }
     }
     function replaceBatch(list) {
         var samePaths = list.length === batchModel.count
@@ -181,6 +184,7 @@ Item {
             ? Object.assign({}, item, { status: "queued", message: "", output: "", outputBytes: 0 }) : item))
         batchOrder = paths
         batchCurrent = -1
+        batchOrderCurrent = -1
         result = null
         candidate = null
         candidates = []
@@ -227,6 +231,14 @@ Item {
             if (line.trim()) details = (details + "\n" + line).slice(-16000)
             return
         }
+        // Still images of a batch convert several at a time and every event
+        // of a file carries its index: each row keeps its own progress, and
+        // the converting screen follows the file started last.
+        if (operation === "batch" && typeof event.index === "number" && event.event.indexOf("item") !== 0) {
+            if (!cancelling && typeof event.progress === "number")
+                updateBatch(batchIndexOf(event.index), { progress: Math.max(0, Math.min(1, event.progress)) })
+            if (event.index !== batchOrderCurrent) return
+        }
         // A conversion probes its input again; only a probe job describes a
         // newly chosen file. Replacing metadata mid-conversion would reset
         // the trim, the recipes and the preview of the file being converted.
@@ -244,20 +256,22 @@ Item {
                 metadata = event
             }
         } else if (event.event === "item") {
+            batchOrderCurrent = event.index
             batchCurrent = batchIndexOf(event.index)
-            updateBatch(batchCurrent, { status: "working" })
+            updateBatch(batchCurrent, { status: "working", progress: 0 })
             progress = 0
             currentPass = 0
             candidate = null
             candidates = []
         } else if (event.event === "item-complete") {
-            updateBatch(batchIndexOf(event.index), { status: "done", output: event.path, outputBytes: event.bytes })
+            updateBatch(batchIndexOf(event.index), { status: "done", progress: 1, output: event.path, outputBytes: event.bytes })
         } else if (event.event === "item-error") {
             updateBatch(batchIndexOf(event.index), { status: "failed", message: event.message })
         } else if (event.event === "batch-complete") {
             job.terminalEvent = true
             terminalEvent = true
             batchCurrent = -1
+            batchOrderCurrent = -1
             result = event
             progress = 1
             phase = "Done"

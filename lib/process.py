@@ -25,7 +25,8 @@ def _die_with_parent(parent):
     The window kills the backend outright when the shell reloads. Tools run
     in their own session (for killpg) and FFmpeg ignores SIGPIPE, so they
     would otherwise keep encoding for minutes into a folder nobody cleans.
-    Popen runs on the main thread, whose exit is what triggers the signal."""
+    The signal follows the thread that started the tool: the main thread,
+    or a batch worker that waits for its tool before it can exit."""
     if _prctl is None:
         return
     _prctl(_PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
@@ -54,15 +55,39 @@ def stall_timeout():
 _ADVANCING = frozenset({"frame", "out_time_us", "out_time_ms", "out_time", "total_size", "progress"})
 
 
-class ProcessRunner:
-    def __init__(self, sink):
-        self.sink = sink
-        self.current = None
+class _Supervision:
+    """What every runner of one backend shares: the running tools, so
+    cancelling stops all of them, and whether the job was cancelled."""
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.active = set()
         self.cancelled = False
         self.signal_number = None
-        self._lock = threading.RLock()
-        self._terminators = {}
-        self._timed_out = set()
+        self.terminators = {}
+        self.timed_out = set()
+
+
+class ProcessRunner:
+    def __init__(self, sink, supervision=None):
+        self.sink = sink
+        self._shared = supervision or _Supervision()
+        self._lock = self._shared.lock
+        self._terminators = self._shared.terminators
+        self._timed_out = self._shared.timed_out
+
+    @property
+    def cancelled(self):
+        return self._shared.cancelled
+
+    @property
+    def signal_number(self):
+        return self._shared.signal_number
+
+    def for_sink(self, sink):
+        """A runner reporting to `sink` that is cancelled with this one:
+        one per file of a batch converted in parallel."""
+        return ProcessRunner(sink, self._shared)
 
     def check_cancelled(self):
         if self.cancelled:
@@ -106,10 +131,10 @@ class ProcessRunner:
 
     def cancel(self, signal_number=signal.SIGTERM):
         with self._lock:
-            self.cancelled = True
-            self.signal_number = signal_number
-            process = self.current
-        if process:
+            self._shared.cancelled = True
+            self._shared.signal_number = signal_number
+            processes = list(self._shared.active)
+        for process in processes:
             self._terminate(process)
 
     def _start(self, args):
@@ -128,7 +153,7 @@ class ProcessRunner:
         except OSError as exc:
             raise ProcessFailed("Could not start a required media tool.", str(exc)) from exc
         with self._lock:
-            self.current = process
+            self._shared.active.add(process)
             cancelled = self.cancelled
         if cancelled:
             self._terminate(process)
@@ -154,8 +179,7 @@ class ProcessRunner:
 
     def _finish(self, process, stderr, message):
         with self._lock:
-            if self.current is process:
-                self.current = None
+            self._shared.active.discard(process)
             terminator = self._terminators.pop(process, None)
             timed_out = process in self._timed_out
             self._timed_out.discard(process)

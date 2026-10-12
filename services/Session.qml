@@ -207,7 +207,9 @@ Item {
     readonly property real batchBytes: root.batchReady.reduce((sum, item) => sum + (item.bytes || 0), 0)
     readonly property int batchFinished: root.service.batch.filter(item => item.status === "done" || item.status === "failed" && item.ok).length
     readonly property real batchProgress: root.batchReady.length
-        ? Math.min(1, (root.batchFinished + (root.service.batchCurrent >= 0 ? root.service.progress : 0)) / root.batchReady.length) : 0
+        ? Math.min(1, (root.batchFinished + root.batchWorking.reduce((sum, item) => sum + (item.progress || 0), 0)) / root.batchReady.length) : 0
+    // Files being converted right now: several for still images.
+    readonly property var batchWorking: root.service.batch.filter(item => item.status === "working")
     function batchTitle() {
         var n = root.batchReady.length
         var word = root.service.batchKind === "image" ? (n === 1 ? "image" : "images") : (n === 1 ? "video" : "videos")
