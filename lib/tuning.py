@@ -38,6 +38,14 @@ PROBE_TIMEOUT = 120.0
 DEFAULT_STALL_TIMEOUT = 300.0
 
 # --- Omarchy integration -------------------------------------------------
+# Ctrl+V reads the clipboard through wl-paste, whose owner can be any app:
+# a read stops at these sizes and after PASTE_TIMEOUT seconds, so a
+# clipboard that streams forever costs a short wait, not memory. Text goes
+# into the command line; a list of copied files names paths.
+PASTE_IMAGE_BYTES = 200_000_000
+PASTE_LIST_BYTES = 1_000_000
+PASTE_TEXT_BYTES = 4_096
+PASTE_TIMEOUT = 5.0
 # Chat apps cap uploads at about this; smaller screen recordings need no
 # "shrink it" offer.
 OFFER_ABOVE_BYTES = 10_000_000

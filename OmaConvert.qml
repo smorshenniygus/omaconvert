@@ -203,10 +203,10 @@ Item {
             if (result.kind === "file") service.selectFiles(result.paths && result.paths.length ? result.paths : [result.path])
             else if (result.kind === "text" && root.session.idleWithFile) {
                 commandLine.field.insert(commandLine.field.cursorPosition, result.text)
-                root.session.editCommand(commandLine.field.text)
                 commandLine.field.forceActiveFocus()
             } else root.pasteNote = result.kind === "text"
                 ? "The clipboard holds text, not a file or an image."
+                : result.reason === "too-large" ? "The clipboard is too large to paste."
                 : "Nothing to paste: copy an image, a screenshot or a file first."
         }
     }
@@ -570,21 +570,41 @@ Item {
                             text: "Details"
                             onClicked: checked = !checked
                         }
-                        TextArea {
+                        // Plain text, not a text area: an editable or selectable Qt
+                        // text item would watch the clipboard (see LineEdit).
+                        Rectangle {
                             Layout.fillWidth: true
-                            Layout.maximumHeight: 120
+                            implicitHeight: Math.min(120, detailsText.implicitHeight + 16)
                             visible: detailsButton.checked && service.details !== ""
-                            text: service.details
-                            readOnly: true
-                            selectByMouse: true
-                            wrapMode: TextEdit.WrapAnywhere
-                            color: root.theme.dim
-                            font.family: root.theme.family
-                            font.pixelSize: root.theme.caption
-                            background: Rectangle {
-                                color: root.theme.surface
-                                border.width: 1
-                                border.color: root.theme.line
+                            color: root.theme.surface
+                            border.width: 1
+                            border.color: root.theme.line
+                            clip: true
+                            Flickable {
+                                id: detailsFlick
+                                anchors.fill: parent
+                                anchors.margins: 8
+                                contentHeight: detailsText.implicitHeight
+                                interactive: contentHeight > height
+                                boundsBehavior: Flickable.StopAtBounds
+                                MonoText {
+                                    id: detailsText
+                                    theme: root.theme
+                                    width: detailsFlick.width
+                                    text: service.details
+                                    color: root.theme.dim
+                                    font.pixelSize: root.theme.caption
+                                    wrapMode: Text.WrapAnywhere
+                                }
+                            }
+                            TextButton {
+                                theme: root.theme
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.margins: 6
+                                label: "copy"
+                                Accessible.name: "Copy the details"
+                                onClicked: root.copy(service.details, false)
                             }
                         }
                     }

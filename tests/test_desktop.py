@@ -9,6 +9,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,6 +97,41 @@ sys.stdout.buffer.write(data.encode("latin-1"))
         self.clipboard(["text/plain"], {"text/plain": "gif 10mb"})
         _code, events = self.run_cli("--paste")
         self.assertEqual((events[-1]["kind"], events[-1]["text"]), ("text", "gif 10mb"))
+
+    def streaming_clipboard(self, kind):
+        # An owner that never stops sending, like a hostile or broken app.
+        self.stub("wl-paste", f"""
+import time
+args = sys.argv[1:]
+if args == ["--list-types"]:
+    print({kind!r}); sys.exit(0)
+chunk = b"x" * 65536
+while True:
+    sys.stdout.buffer.write(chunk); sys.stdout.buffer.flush()
+""")
+
+    def test_endless_text_stops_at_the_limit(self):
+        for kind in ("text/plain", "image/png", "text/uri-list"):
+            with self.subTest(kind=kind):
+                self.streaming_clipboard(kind)
+                started = time.monotonic()
+                code, events = self.run_cli("--paste")
+                self.assertEqual(code, 0)
+                self.assertEqual((events[-1]["kind"], events[-1].get("reason")), ("none", "too-large"))
+                self.assertLess(time.monotonic() - started, 8)
+                self.assertFalse((self.home / "Pictures" / "OmaConvert").exists())
+
+    def test_a_silent_owner_costs_only_the_timeout(self):
+        self.stub("wl-paste", """
+import time
+if sys.argv[1:] == ["--list-types"]:
+    print("text/plain"); sys.exit(0)
+time.sleep(60)
+""")
+        started = time.monotonic()
+        _code, events = self.run_cli("--paste")
+        self.assertEqual(events[-1]["kind"], "none")
+        self.assertLess(time.monotonic() - started, 9)
 
     def test_empty_clipboard(self):
         self.clipboard([], {})

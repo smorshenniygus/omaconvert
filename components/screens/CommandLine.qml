@@ -28,20 +28,20 @@ ColumnLayout {
     RowLayout {
         Layout.fillWidth: true
         spacing: 8
-        Ui.TextField {
+        LineEdit {
             id: commandInput
             Layout.fillWidth: true
-            foreground: root.theme.fg
-            accent: root.theme.accent
-            horizontalPadding: root.metrics.controlPaddingX + root.theme.px(1.5)
-            font.family: root.theme.family
-            font.pixelSize: root.theme.px(1.167)
-            font.bold: true
-            selectByMouse: true
+            theme: root.theme
+            leftPadding: root.metrics.controlPaddingX + root.theme.px(1.5)
+            rightPadding: root.metrics.controlPaddingX
+            verticalPadding: root.metrics.inputPaddingY
+            fontSize: root.theme.px(1.167)
+            bold: true
+            maximumLength: 256
             placeholderText: root.session.inputKind === "image" ? "webp  ·  png 500kb  ·  jpg" : "gif 30mb  ·  mp4 quick  ·  png frames 10fps"
             Accessible.name: "What to make, for example gif 30mb"
             text: root.session.commandText
-            onTextEdited: root.session.editCommand(text)
+            onEdited: value => root.session.editCommand(value)
             Keys.onPressed: event => {
                 if (event.matches(StandardKey.Paste)) { root.pasteRequested(); event.accepted = true }
             }
@@ -50,7 +50,7 @@ ColumnLayout {
             Keys.onReturnPressed: event => root.commandReturn(event)
             Keys.onEnterPressed: event => root.commandReturn(event)
             Keys.onEscapePressed: event => {
-                if (text === "") { event.accepted = false; return }
+                if (commandInput.text === "") { event.accepted = false; return }
                 root.session.editCommand("")
                 event.accepted = true
             }

@@ -6,7 +6,7 @@ Everything the [README](../README.md) leaves out.
 
 ![OmaConvert: a video with its recipes, command line and trim](../preview.png)
 
-1. **Choose a file.** Click the Source field, press Enter, drop a file onto it, use Open With, or press **Ctrl+V**: a screenshot or copied image (saved to `~/Pictures/OmaConvert/`), a file copied in the file manager or a path all open as the source.
+1. **Choose a file.** Click the Source field, press Enter, drop a file onto it, use Open With, or press **Ctrl+V**: a screenshot or copied image (saved to `~/Pictures/OmaConvert/`), a file copied in the file manager or a path all open as the source. The window reads the clipboard only when you press Ctrl+V, through `wl-paste`, and stops at 200 MB for an image, 4 KB for text and after 5 seconds.
 2. **Trim** a video on the edit track under the preview. The preview follows the handle you move, and the size limit applies to the trimmed part.
 3. **Pick a recipe**, or type in the `❯` line above the list. The size bar shows the source against the limit, so you see how much has to go.
 4. **⚙ settings** (Ctrl+,) opens every field: format, mode, max size with presets (Discord 10 MB, X GIF 15 MB, email 25 MB, web 500 KB), GIF preference, quick quality, frame rate for sequences and the output folder. The fields and the line stay in sync, and **Will make** shows the file name you will get.

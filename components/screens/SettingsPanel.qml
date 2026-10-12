@@ -1,7 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
-import qs.Ui as Ui
 import "../../services"
 import "../../services/Model.js" as Model
 import "../ui"
@@ -75,19 +74,17 @@ Rectangle {
             enabled: root.session.sizeShown
             RowLayout {
                 spacing: 8
-                Ui.TextField {
+                LineEdit {
                     id: sizeInput
+                    theme: root.theme
                     text: root.session.sizeText
                     Layout.preferredWidth: root.theme.px(6.5)
-                    foreground: root.theme.fg
-                    accent: root.theme.accent
-                    font.family: root.theme.family
-                    font.bold: true
-                    selectByMouse: true
-                    horizontalAlignment: TextInput.AlignRight
+                    bold: true
+                    alignRight: true
+                    maximumLength: 9
+                    accepts: ch => /^[0-9.,]$/.test(ch)
                     Accessible.name: "Maximum file size"
-                    inputMethodHints: Qt.ImhFormattedNumbersOnly
-                    onTextEdited: { root.session.sizeText = text; root.session.syncCommand() }
+                    onEdited: value => { root.session.sizeText = value; root.session.syncCommand() }
                 }
                 Segments {
                     options: ["MB", "KB"]

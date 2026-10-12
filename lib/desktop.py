@@ -7,12 +7,15 @@ import json
 import os
 from pathlib import Path
 import re
+import selectors
 import shutil
 import subprocess
+import time
 from urllib.parse import unquote, urlparse
 
 from .launcher import PLUGIN_ID, ROOT
-from .tuning import OFFER_ABOVE_BYTES
+from .tuning import (OFFER_ABOVE_BYTES, PASTE_IMAGE_BYTES, PASTE_LIST_BYTES, PASTE_TEXT_BYTES,
+                     PASTE_TIMEOUT)
 
 IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif", "image/bmp": "bmp"}
 # Hyprland modmask bits.
@@ -36,6 +39,49 @@ def _run(args, binary=False, timeout=5):
 
 
 # ── Clipboard ──────────────────────────────────────────────────────────────
+class ClipboardTooLarge(Exception):
+    pass
+
+
+def _bounded(args, limit, timeout=None):
+    """Output of `args`, or None when it is slower than `timeout` seconds or
+    fails; ClipboardTooLarge past `limit` bytes. Reads in chunks and stops
+    the reader at either bound: the clipboard owner can be any app."""
+    try:
+        process = subprocess.Popen(args, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except OSError:
+        return None
+    data = bytearray()
+    deadline = time.monotonic() + (PASTE_TIMEOUT if timeout is None else timeout)
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+    try:
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0 or not selector.select(left):
+                return None
+            chunk = os.read(process.stdout.fileno(), 65536)
+            if not chunk:
+                break
+            data += chunk
+            if len(data) > limit:
+                raise ClipboardTooLarge()
+        return bytes(data) if process.wait(timeout=max(0.1, deadline - time.monotonic())) == 0 else None
+    except subprocess.TimeoutExpired:
+        return None
+    finally:
+        selector.close()
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        process.stdout.close()
+
+
+def _read_clipboard(mime, limit):
+    return _bounded(["wl-paste", "--no-newline", "--type", mime], limit)
+
+
 def pictures_dir():
     env = os.environ.get("XDG_PICTURES_DIR")
     if env:
@@ -59,12 +105,19 @@ def paste():
     ~/Pictures/OmaConvert so the result can sit next to it."""
     if not shutil.which("wl-paste"):
         return {"kind": "none", "reason": "wl-paste is not installed"}
-    listed = _run(["wl-paste", "--list-types"])
-    types = listed.stdout.split() if listed and listed.returncode == 0 else []
+    try:
+        return _paste()
+    except ClipboardTooLarge:
+        return {"kind": "none", "reason": "too-large"}
+
+
+def _paste():
+    listed = _bounded(["wl-paste", "--list-types"], PASTE_LIST_BYTES)
+    types = listed.decode("utf-8", "replace").split() if listed else []
     image = next((t for t in IMAGE_TYPES if t in types), None)
     if image:
-        data = _run(["wl-paste", "--no-newline", "--type", image], binary=True)
-        if data and data.returncode == 0 and data.stdout:
+        data = _read_clipboard(image, PASTE_IMAGE_BYTES)
+        if data:
             folder = pictures_dir() / "OmaConvert"
             folder.mkdir(parents=True, exist_ok=True)
             stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -72,18 +125,17 @@ def paste():
                 target = folder / f"pasted-{stamp}{'' if number == 1 else f'-{number}'}.{IMAGE_TYPES[image]}"
                 try:
                     with open(target, "xb") as handle:
-                        handle.write(data.stdout)
+                        handle.write(data)
                     return {"kind": "file", "path": str(target), "paths": [str(target)], "source": "image"}
                 except FileExistsError:
                     continue
     if "text/uri-list" in types:
-        uris = _run(["wl-paste", "--no-newline", "--type", "text/uri-list"])
-        paths = [p for p in (_existing_file(line) for line in (uris.stdout.splitlines() if uris and uris.returncode == 0 else [])) if p]
+        uris = (_read_clipboard("text/uri-list", PASTE_LIST_BYTES) or b"").decode("utf-8", "replace")
+        paths = [p for p in (_existing_file(line) for line in uris.splitlines()) if p]
         if paths:
             return {"kind": "file", "path": paths[0], "paths": paths, "source": "file"}
     if any(t.startswith("text/plain") for t in types):
-        text = _run(["wl-paste", "--no-newline", "--type", "text/plain"])
-        value = text.stdout if text and text.returncode == 0 else ""
+        value = (_read_clipboard("text/plain", PASTE_TEXT_BYTES) or b"").decode("utf-8", "replace")
         path = _existing_file(value)
         if path:
             return {"kind": "file", "path": path, "paths": [path], "source": "path"}
