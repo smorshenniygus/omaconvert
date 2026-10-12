@@ -7,7 +7,6 @@ Item {
     id: root
     required property string executable
     readonly property bool busy: currentJob !== null || transitioning
-    property bool starting: false
     property bool cancelling: false
     property string operation: ""
     property string inputPath: ""
@@ -41,9 +40,16 @@ Item {
     // {path, status: reading|queued|working|done|failed|skipped, ok, kind,
     //  bytes, width, height, message, output, outputBytes}. Empty for one file.
     property var batch: []
+    // The same rows for the list on screen. A changed row is updated in
+    // place (ListModel.set), so its delegate is kept instead of the whole
+    // list being recreated several times per file. Change `batch` only
+    // through replaceBatch() and updateBatch(), which keep both in step.
+    property ListModel batchModel: ListModel {}
     property string batchKind: ""
     readonly property bool isBatch: batch.length > 1
     property int batchCurrent: -1
+    // Input index (in batchOrder) of the batch file started last.
+    property int batchOrderCurrent: -1
     // Paths sent with the running batch, in order: event index -> entry.
     property var batchOrder: []
 
@@ -60,7 +66,6 @@ Item {
         terminalEvent = false
         cancelling = false
         operation = kind
-        starting = true
         lastExit = 0
         var job = jobComponent.createObject(root, {
             generation: ++nextGeneration,
@@ -72,13 +77,34 @@ Item {
     function check() { launch(["--check"], "check") }
     // Independent of the job queue: a probe/convert must not cancel it, and
     // it must not cancel them. At most once per session unless it failed.
+    // Everything the window needs when it opens, in one backend call:
+    // version, dependencies, capabilities, the Open With entry and the hotkey.
+    function loadStatus() { statusCall.run(["--status"]) }
+    function applyStatus(event) {
+        var deps = event.dependencies || {}
+        dependenciesReady = deps.ok !== false
+        if (event.version) backendVersion = String(event.version)
+        notice = deps.gifsicle === false ? "Tip: install gifsicle to make GIFs a little smaller." : ""
+        if (event.error && !busy) { error = event.error.message || ""; details = event.error.details || "" }
+        if (event.capabilities) capabilities = event.capabilities
+        if (event.open_with) {
+            if (event.open_with.error) openWithError = event.open_with.error
+            else {
+                openWith = event.open_with
+                // Refresh our own entry written by an older version.
+                if (openWith.enabled && openWith.current === false) Qt.callLater(() => root.setOpenWith(true))
+            }
+        }
+        if (event.hotkey) {
+            if (event.hotkey.error) hotkeyError = event.hotkey.error
+            else hotkey = event.hotkey
+        }
+    }
     function loadCapabilities() {
-        if (capabilities !== null || capabilitiesProcess.running) return
-        capabilitiesProcess.command = ["python3", executable, "--capabilities"]
-        capabilitiesProcess.running = true
+        if (capabilities === null) capabilitiesCall.run(["--capabilities"])
     }
     function beginProbe(path) {
-        batch = []
+        replaceBatch([])
         batchKind = ""
         inputPath = path
         metadata = null
@@ -120,28 +146,45 @@ Item {
         result = null
         batchKind = ""
         batchCurrent = -1
-        batch = list.map(path => ({ path: path, status: "reading" }))
+        batchOrderCurrent = -1
+        replaceBatch(list.map(path => ({ path: path, status: "reading" })))
         phase = "Reading " + list.length + " files…"
         launch(["--probe-all"].concat(list), "probe-all")
     }
     function batchPaths() {
         return batch.filter(item => item.ok && item.status !== "skipped").map(item => item.path)
     }
+    function batchRow(item) {
+        return { path: item.path || "", status: item.status || "reading", ok: item.ok === true,
+                 bytes: Number(item.bytes || 0), outputBytes: Number(item.outputBytes || 0),
+                 progress: Number(item.progress || 0), message: item.message || "" }
+    }
+    function replaceBatch(list) {
+        var samePaths = list.length === batchModel.count
+            && list.every((item, i) => batchModel.get(i).path === (item.path || ""))
+        batch = list
+        if (!samePaths) batchModel.clear()
+        for (var i = 0; i < list.length; i++) {
+            if (samePaths) batchModel.set(i, batchRow(list[i]))
+            else batchModel.append(batchRow(list[i]))
+        }
+    }
     function updateBatch(index, fields) {
         if (index < 0 || index >= batch.length) return
         var copy = batch.slice()
         copy[index] = Object.assign({}, copy[index], fields)
         batch = copy
+        batchModel.set(index, batchRow(copy[index]))
     }
     function convertBatch(format, mode, size, unit, preset, preference, outputDir, sequenceFps) {
         if (busy || !metadata || !dependenciesReady) return
         var paths = batchPaths()
         if (paths.length === 0) return
-        var copy = batch.map(item => item.ok && item.status !== "skipped"
-            ? Object.assign({}, item, { status: "queued", message: "", output: "", outputBytes: 0 }) : item)
-        batch = copy
+        replaceBatch(batch.map(item => item.ok && item.status !== "skipped"
+            ? Object.assign({}, item, { status: "queued", message: "", output: "", outputBytes: 0 }) : item))
         batchOrder = paths
         batchCurrent = -1
+        batchOrderCurrent = -1
         result = null
         candidate = null
         candidates = []
@@ -181,12 +224,34 @@ Item {
         phase = "Cancelling…"
         if (currentJob) currentJob.stop()
     }
+    // One number for a whole file out of its stages: a size search fills
+    // the first 80 %, the encode (each pass a share) the rest. Never moves
+    // back, so a row does not jump between stages.
+    function fileProgress(event, row) {
+        var p = Math.max(0, Math.min(1, event.progress))
+        var searched = row.searched || event.event === "candidate"
+        if (event.event === "analyzing" || event.event === "candidate") return searched ? 0.8 * p : 0
+        if (event.event === "optimizing") return 0.95 + 0.05 * p
+        if (event.event !== "encoding") return 0
+        if (event.passes > 1 && event.pass >= 1) p = (event.pass - 1 + p) / event.passes
+        return searched ? 0.8 + 0.2 * p : p
+    }
     function receive(job, line) {
         if (!isCurrent(job)) return
         var event = Model.eventFromLine(line)
         if (!event) {
             if (line.trim()) details = (details + "\n" + line).slice(-16000)
             return
+        }
+        // Still images of a batch convert several at a time and every event
+        // of a file carries its index: each row keeps its own progress, and
+        // the converting screen follows the file started last.
+        if (operation === "batch" && typeof event.index === "number" && event.event.indexOf("item") !== 0) {
+            var row = batchIndexOf(event.index)
+            if (!cancelling && row >= 0 && typeof event.progress === "number")
+                updateBatch(row, { progress: Math.max(batch[row].progress || 0, fileProgress(event, batch[row])),
+                                   searched: batch[row].searched || event.event === "candidate" })
+            if (event.index !== batchOrderCurrent) return
         }
         // A conversion probes its input again; only a probe job describes a
         // newly chosen file. Replacing metadata mid-conversion would reset
@@ -205,20 +270,22 @@ Item {
                 metadata = event
             }
         } else if (event.event === "item") {
+            batchOrderCurrent = event.index
             batchCurrent = batchIndexOf(event.index)
-            updateBatch(batchCurrent, { status: "working" })
+            updateBatch(batchCurrent, { status: "working", progress: 0 })
             progress = 0
             currentPass = 0
             candidate = null
             candidates = []
         } else if (event.event === "item-complete") {
-            updateBatch(batchIndexOf(event.index), { status: "done", output: event.path, outputBytes: event.bytes })
+            updateBatch(batchIndexOf(event.index), { status: "done", progress: 1, output: event.path, outputBytes: event.bytes })
         } else if (event.event === "item-error") {
             updateBatch(batchIndexOf(event.index), { status: "failed", message: event.message })
         } else if (event.event === "batch-complete") {
             job.terminalEvent = true
             terminalEvent = true
             batchCurrent = -1
+            batchOrderCurrent = -1
             result = event
             progress = 1
             phase = "Done"
@@ -226,7 +293,7 @@ Item {
             dependenciesReady = event.ok !== false
             if (event.version) backendVersion = String(event.version)
             notice = event.gifsicle === false ? "Tip: install gifsicle to make GIFs a little smaller." : ""
-        } else if (event.event === "warning") notice = event.message || ""
+        }
         else if (event.event === "candidate") { candidate = event; candidates = candidates.concat([event]).slice(-6) }
         else if (event.event === "complete") {
             job.terminalEvent = true
@@ -252,36 +319,30 @@ Item {
         if (!cancelling && typeof event.progress === "number") progress = Math.max(0, Math.min(1, event.progress))
         if (typeof event.pass === "number") currentPass = event.pass
     }
+    // Quickshell ends the stdout parser (flushing a last line without a
+    // newline) before it reports the exit, so every event is in by now.
     function exited(job, exitCode) {
-        if (!isCurrent(job)) return
-        starting = false
+        if (!isCurrent(job)) { job.destroy(); return }
         lastExit = exitCode
-        job.exitDone = true
-        job.maybeSettle()
+        settle(job)
     }
     function startFailed(job) {
         if (!isCurrent(job) || job.started) return
-        starting = false
         job.terminalEvent = true
         error = "Could not start Python 3. Check that python3 and the plugin backend are installed."
-        job.exitDone = true
-        job.stdoutDone = true
-        job.maybeSettle()
+        settle(job)
     }
     function settle(job) {
-        if (!isCurrent(job)) { job.destroy(); return }
-        // Finalize only after process exit AND the stdout stream has drained.
         // Each launch owns its parsers; old objects cannot affect a new job.
         var wasCancelling = cancelling
         var nextPath = pendingSelection
         if (nextPath) transitioning = true
         currentJob = null
-        starting = false
         if (operation === "batch")
-            batch = batch.map(item => item.status === "working" || item.status === "queued"
-                ? Object.assign({}, item, { status: "stopped" }) : item)
+            replaceBatch(batch.map(item => item.status === "working" || item.status === "queued"
+                ? Object.assign({}, item, { status: "stopped" }) : item))
         else if (operation === "probe-all") // cancelled or crashed while reading
-            batch = batch.map(item => item.status === "reading" ? Object.assign({}, item, { status: "stopped" }) : item)
+            replaceBatch(batch.map(item => item.status === "reading" ? Object.assign({}, item, { status: "stopped" }) : item))
         if (wasCancelling && !result) phase = "Cancelled — your source is unchanged."
         else if (!job.terminalEvent && (lastExit !== 0 || ((operation === "convert" || operation === "batch") && !result)))
             error = "The converter stopped unexpectedly. See Details and try again."
@@ -299,88 +360,56 @@ Item {
     function loadHotkey() { runHotkey("status") }
     function setHotkey(enabled) { runHotkey(enabled ? "on" : "off") }
     function runHotkey(action) {
-        if (hotkeyProcess.running) return
+        if (hotkeyCall.busy) return
         hotkeyError = ""
-        hotkeyProcess.command = ["python3", executable, "--hotkey", action]
-        hotkeyProcess.running = true
+        hotkeyCall.run(["--hotkey", action])
     }
     // Ctrl+V: {kind: "file"|"text"|"none", path, text} arrives through pasted().
     signal pasted(var result)
-    function paste() {
-        if (pasteProcess.running) return
-        pasteProcess.command = ["python3", executable, "--paste"]
-        pasteProcess.running = true
-    }
+    function paste() { pasteCall.run(["--paste"]) }
 
     // Like capabilities: independent of the job queue.
     function loadOpenWith() { runOpenWith("status") }
     function setOpenWith(enabled) { runOpenWith(enabled ? "on" : "off") }
     function runOpenWith(action) {
-        if (openWithProcess.running) return
+        if (openWithCall.busy) return
         openWithError = ""
-        openWithProcess.command = ["python3", executable, "--open-with", action]
-        openWithProcess.running = true
+        openWithCall.run(["--open-with", action])
     }
 
-    Process {
-        id: hotkeyProcess
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: {
-                var lines = text.split("\n")
-                for (var i = 0; i < lines.length; i++) {
-                    var event = Model.eventFromLine(lines[i])
-                    if (event && event.event === "hotkey") root.hotkey = event
-                    else if (event && event.event === "error") root.hotkeyError = event.details || event.message
-                }
-            }
+    CliCall {
+        id: hotkeyCall
+        executable: root.executable
+        onEvent: event => {
+            if (event.event === "hotkey") root.hotkey = event
+            else if (event.event === "error") root.hotkeyError = event.details || event.message
         }
     }
-    Process {
-        id: pasteProcess
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: {
-                var lines = text.split("\n")
-                for (var i = 0; i < lines.length; i++) {
-                    var event = Model.eventFromLine(lines[i])
-                    if (event && event.event === "paste") root.pasted(event)
-                }
-            }
+    CliCall {
+        id: pasteCall
+        executable: root.executable
+        onEvent: event => { if (event.event === "paste") root.pasted(event) }
+    }
+    CliCall {
+        id: openWithCall
+        executable: root.executable
+        onEvent: event => {
+            if (event.event === "open-with") {
+                root.openWith = event
+                // Refresh our own entry written by an older version.
+                if (event.enabled && event.current === false) Qt.callLater(() => root.setOpenWith(true))
+            } else if (event.event === "error") root.openWithError = event.details || event.message
         }
     }
-
-    Process {
-        id: openWithProcess
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: {
-                var lines = text.split("\n")
-                for (var i = 0; i < lines.length; i++) {
-                    var event = Model.eventFromLine(lines[i])
-                    if (event && event.event === "open-with") {
-                        root.openWith = event
-                        // Refresh our own entry written by an older version.
-                        if (event.enabled && event.current === false) Qt.callLater(() => root.setOpenWith(true))
-                    }
-                    else if (event && event.event === "error") root.openWithError = event.details || event.message
-                }
-            }
-        }
+    CliCall {
+        id: statusCall
+        executable: root.executable
+        onEvent: event => { if (event.event === "status") root.applyStatus(event) }
     }
-
-    Process {
-        id: capabilitiesProcess
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: {
-                var lines = text.split("\n")
-                for (var i = 0; i < lines.length; i++) {
-                    var event = Model.eventFromLine(lines[i])
-                    if (event && event.event === "capabilities") root.capabilities = event
-                }
-            }
-        }
+    CliCall {
+        id: capabilitiesCall
+        executable: root.executable
+        onEvent: event => { if (event.event === "capabilities") root.capabilities = event }
     }
 
     Component {
@@ -391,9 +420,6 @@ Item {
             required property var commandLine
             property bool started: false
             property bool terminalEvent: false
-            property bool exitDone: false
-            property bool stdoutDone: false
-            property int consumed: 0
 
             function start() {
                 process.command = commandLine
@@ -403,29 +429,13 @@ Item {
             function stop() {
                 if (process.running) process.signal(15)
             }
-            function maybeSettle() {
-                if (exitDone && stdoutDone) root.settle(job)
-            }
-            function consume(text, finalChunk) {
-                var end = finalChunk ? text.length : text.lastIndexOf("\n") + 1
-                if (end <= consumed) return
-                var lines = text.slice(consumed, end).split("\n")
-                consumed = end
-                for (var i = 0; i < lines.length; i++) {
-                    if (lines[i].trim()) root.receive(job, lines[i])
-                }
-            }
 
             Process {
                 id: process
-                stdout: StdioCollector {
-                    waitForEnd: false
-                    onDataChanged: job.consume(text, false)
-                    onStreamFinished: {
-                        job.consume(text, true)
-                        job.stdoutDone = true
-                        job.maybeSettle()
-                    }
+                // One line at a time: a collector would re-decode the whole
+                // growing output on every chunk (quadratic for a long batch).
+                stdout: SplitParser {
+                    onRead: line => { if (line.trim()) root.receive(job, line) }
                 }
                 stderr: SplitParser {
                     onRead: line => {
@@ -435,7 +445,6 @@ Item {
                 onStarted: {
                     job.started = true
                     startup.stop()
-                    if (root.isCurrent(job)) root.starting = false
                     if (root.isCurrent(job) && root.cancelling) signal(15)
                 }
                 // Installed Quickshell metadata omits QProcess::ExitStatus.

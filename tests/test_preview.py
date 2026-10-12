@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from lib.errors import OmaConvertError
-from lib.preview import clamp_edge, generate_preview, preview_position
-from lib.probe import MediaInfo
+from lib.preview import clamp_edge, generate_preview, png_size, preview_position
+from lib.probe import MediaInfo, probe_media
 from lib.process import ProcessRunner
 
 
@@ -54,6 +54,19 @@ class PreviewTests(unittest.TestCase):
         self.assertLess(got["seek"], 2.0)
         self.assertEqual(got["kind"], "video")
 
+    def test_preview_size_comes_from_the_png_header(self):
+        output = self.root / "header-preview.png"
+        got = generate_preview(self.runner, self.video, output, max_edge=320)
+        probed = probe_media(output, self.runner)
+        self.assertEqual((got["width"], got["height"]), (probed.width, probed.height))
+        not_png = self.root / "not.png"
+        not_png.write_bytes(b"GIF89a" + bytes(40))
+        with self.assertRaises(OmaConvertError):
+            png_size(not_png)
+        not_png.write_bytes(b"")
+        with self.assertRaises(OmaConvertError):
+            png_size(not_png)
+
     def test_image_preview_preserves_aspect_and_alpha(self):
         output = self.root / "image-preview.png"
         got = generate_preview(self.runner, self.image, output, max_edge=200)
@@ -73,6 +86,25 @@ class PreviewTests(unittest.TestCase):
         output = self.root / "huge-preview.png"
         got = generate_preview(self.runner, self.image, output, max_edge=9999)
         self.assertLessEqual(max(got["width"], got["height"]), 640)
+
+    def test_preview_preserves_display_aspect_for_non_square_pixels(self):
+        for sar, expected in (("2/1", (320, 120)), ("1/2", (213, 320))):
+            with self.subTest(sar=sar):
+                source = self.root / "anamorphic.mp4"
+                subprocess.run([
+                    "ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                    "testsrc2=s=320x240:r=10:d=1", "-vf", "setsar=" + sar,
+                    "-c:v", "libx264", str(source),
+                ], check=True)
+                got = generate_preview(self.runner, source, self.root / "anamorphic.png")
+                self.assertEqual((got["width"], got["height"]), expected)
+                rotated = self.root / "rotated.mp4"
+                subprocess.run([
+                    "ffmpeg", "-v", "error", "-y", "-display_rotation:v:0", "90",
+                    "-i", str(source), "-c", "copy", str(rotated),
+                ], check=True)
+                got = generate_preview(self.runner, rotated, self.root / "rotated.png")
+                self.assertEqual((got["width"], got["height"]), expected[::-1])
 
     def test_position_selection(self):
         info = MediaInfo("c.mp4", 8.0, 640, 480, 15.0, "h264", 1000, True)
@@ -100,6 +132,47 @@ class PreviewTests(unittest.TestCase):
         self.assertLessEqual(max(preview["width"], preview["height"]), 160)
         self.assertTrue(Path(preview["path"]).is_file())
         self.assertEqual(result.stderr, "")
+
+    def test_known_probe_and_draft_frames(self):
+        """--preview-meta skips the probe and gives the same picture;
+        --preview-fast gives a valid frame of the same size at a keyframe."""
+        cli = str(ROOT / "bin" / "omaconvert")
+        probe = json.loads(subprocess.run([cli, "--probe", str(self.video)], text=True,
+                                          stdout=subprocess.PIPE, check=True).stdout.splitlines()[-1])
+
+        def preview(name, *extra):
+            output = self.root / name
+            done = subprocess.run([cli, "--preview", str(self.video), "--preview-output", str(output),
+                                   "--preview-position", "1.2", *extra],
+                                  text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            event = json.loads(done.stdout.splitlines()[-1])
+            self.assertEqual(event["event"], "preview")
+            return event, output.read_bytes()
+
+        plain, plain_png = preview("plain.png")
+        known, known_png = preview("known.png", "--preview-meta", json.dumps(probe))
+        # One keyframe only: FFmpeg gives no keyframe-only frame after a seek,
+        # so the draft falls back to the exact frame.
+        fallback, fallback_png = preview("fallback.png", "--preview-meta", json.dumps(probe), "--preview-fast")
+        self.assertEqual(known_png, plain_png)
+        self.assertEqual((plain["draft"], fallback["draft"]), (False, False))
+        self.assertEqual(fallback_png, plain_png)
+        # Frequent keyframes: the draft is the keyframe before the position.
+        keyed = self.root / "keyed.mp4"
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+                        "-i", "testsrc2=s=640x480:r=15:d=3", "-c:v", "libx264", "-g", "5",
+                        "-pix_fmt", "yuv420p", str(keyed)], check=True)
+        out = self.root / "keyed.png"
+        done = subprocess.run([cli, "--preview", str(keyed), "--preview-output", str(out),
+                               "--preview-position", "1.2", "--preview-fast"],
+                              text=True, stdout=subprocess.PIPE, check=True)
+        draft = json.loads(done.stdout.splitlines()[-1])
+        self.assertTrue(draft["draft"])
+        self.assertEqual((draft["width"], draft["height"]), (plain["width"], plain["height"]))
+        bad = subprocess.run([cli, "--preview", str(self.video), "--preview-output", str(self.root / "x.png"),
+                              "--preview-meta", "{not json"], text=True, stdout=subprocess.PIPE)
+        self.assertIn("--preview-meta", json.loads(bad.stdout.splitlines()[-1])["message"])
 
     def test_cli_preview_requires_output(self):
         result = subprocess.run(

@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
+import "ui"
 
 // Segmented choice in the panel's terminal idiom: one bordered strip, the
 // chosen cell tinted with the selection color, a focus-colored border while
@@ -9,16 +10,12 @@ import QtQuick.Layouts
 // on every user pick. `value` is owned by the caller: a pick only emits
 // `changed` and the caller updates the property `value` is bound to, so the
 // binding (and the highlight) keeps following the model after any click.
-// Theme colors arrive as properties (unit-testable).
+// Colours and type come from one Theme object (tests pass a stub).
 Rectangle {
     id: root
+    required property Theme theme
     property var options: []
     property string value: ""
-    property color foreground: "#cacccc"
-    property color selectedColor: "#819890"
-    property color focusColor: "#f4e276"
-    property string fontFamily: "monospace"
-    property int fontSize: 12
     signal changed(string value)
 
     function optionValue(o) { return (o && typeof o === "object") ? String(o.value) : String(o) }
@@ -38,7 +35,7 @@ Rectangle {
     implicitHeight: cells.implicitHeight + 2
     color: "transparent"
     border.width: 1
-    border.color: root.activeFocus ? root.focusColor : Qt.rgba(foreground.r, foreground.g, foreground.b, 0.3)
+    border.color: root.activeFocus ? root.theme.focus : root.theme.alpha(root.theme.fg, 0.3)
     opacity: enabled ? 1 : 0.38
     activeFocusOnTab: enabled
     Accessible.role: Accessible.PageTabList
@@ -63,22 +60,21 @@ Rectangle {
                 readonly property bool on: root.optionValue(cell.modelData) === root.value
                 implicitWidth: label.implicitWidth + 18
                 implicitHeight: label.implicitHeight + 8
-                color: cell.on ? Qt.rgba(root.selectedColor.r, root.selectedColor.g, root.selectedColor.b, 0.28)
-                     : (mouse.containsMouse ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.06) : "transparent")
+                color: cell.on ? root.theme.alpha(root.theme.sage, 0.28)
+                     : (mouse.containsMouse ? root.theme.alpha(root.theme.fg, 0.06) : "transparent")
                 Rectangle {
                     visible: cell.index > 0
                     width: 1
                     height: parent.height
-                    color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
+                    color: root.theme.alpha(root.theme.fg, 0.15)
                 }
-                Text {
+                MonoText {
                     id: label
+                    theme: root.theme
+                    size: 0.917
                     anchors.centerIn: parent
-                    textFormat: Text.PlainText
                     text: root.optionLabel(cell.modelData)
-                    color: cell.on ? root.foreground : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.55)
-                    font.family: root.fontFamily
-                    font.pixelSize: root.fontSize
+                    color: cell.on ? root.theme.fg : root.theme.dim
                     font.bold: cell.on
                 }
                 MouseArea {

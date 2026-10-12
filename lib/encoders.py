@@ -7,6 +7,9 @@ import shutil
 from .color import chain, sdr_filter
 from .errors import OmaConvertError
 from .optimizer import size_text
+from .tuning import (
+    MIN_BITS_PER_PIXEL, MIN_VIDEO_BITRATE, SIZE_HEADROOM, TARGET_AUDIO_RATE, VIDEO_RATE_SHARE,
+)
 
 
 def parse_ffmpeg_progress(line, duration):
@@ -33,9 +36,9 @@ def _base_ffmpeg():
     return ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
 
 
-def _input_args(input_path, seek=0.0, clip=None):
+def _input_args(input_path, seek=0.0, clip=None, input_seek=True):
     """Input seeking for a trimmed clip. Plain -i when untouched."""
-    if (seek or 0) <= 0 and clip is None:
+    if not input_seek or ((seek or 0) <= 0 and clip is None):
         return ["-i", str(input_path)]
     args = []
     if (seek or 0) > 0:
@@ -45,13 +48,33 @@ def _input_args(input_path, seek=0.0, clip=None):
     return args + ["-i", str(input_path)]
 
 
+def can_seek_input(info):
+    # MPEG-TS has no seek index. Seeking into a long GOP can miss the only
+    # decodable keyframe; decode from the beginning and trim in the filters.
+    # Use the probed demuxer, so renamed transport streams behave the same.
+    return "mpegts" not in getattr(info, "format_name", "").split(",")
+
+
+def _trim_filter(input_seek, seek=0.0, clip=None, audio=False):
+    if input_seek or (not seek and clip is None):
+        return ""
+    trim = "atrim" if audio else "trim"
+    pts = "asetpts" if audio else "setpts"
+    interval = f"{trim}=start={seek:.6f}"
+    if clip is not None:
+        interval += f":end={seek + clip:.6f}"
+    # Subtract the shared requested position, preserving offsets between
+    # audio and video rather than independently resetting their first PTS.
+    return f"{interval},{pts}=PTS-{seek:.6f}/TB"
+
+
 def _vf(profile, sdr=""):
     # Tone mapping after the downscale: far cheaper than at source size.
     return chain(f"fps={profile.fps:.6g}", f"scale={profile.width}:{profile.height}:flags=lanczos",
                  sdr, "setsar=1")
 
 
-def _sample_inputs(input_path, samples, seek=0.0, clip=None):
+def _sample_inputs(input_path, samples, seek=0.0, clip=None, input_seek=True):
     args = []
     for start, length in samples:
         start += seek
@@ -59,12 +82,16 @@ def _sample_inputs(input_path, samples, seek=0.0, clip=None):
             if start >= seek + clip:
                 continue
             length = min(length, seek + clip - start)
-        args += ["-ss", f"{start:.6f}", "-t", f"{length:.6f}", "-i", str(input_path)]
+        args += _input_args(input_path, start, length, input_seek)
     return args
 
 
-def _sample_graph(profile, count, palette=False, stream_index=0, sdr=""):
-    parts = [f"[{i}:{stream_index}]{_vf(profile, sdr)},setpts=PTS-STARTPTS[v{i}]" for i in range(count)]
+def _sample_graph(profile, count, palette=False, stream_index=0, sdr="",
+                  samples=None, seek=0.0, input_seek=True):
+    parts = []
+    for i in range(count):
+        trim = _trim_filter(input_seek, seek + samples[i][0], samples[i][1]) if samples else ""
+        parts.append(f"[{i}:{stream_index}]{chain(trim, _vf(profile, sdr))},setpts=PTS-STARTPTS[v{i}]")
     if count == 1:
         base = "[v0]"
     else:
@@ -78,30 +105,33 @@ def _sample_graph(profile, count, palette=False, stream_index=0, sdr=""):
 
 def encode_gif(runner, input_path, output, profile, duration, workdir, samples=None,
                pass_number=1, passes=1, gifsicle=None, stream_index=0,
-               seek=0.0, clip=None, sdr=""):
+               seek=0.0, clip=None, sdr="", input_seek=True):
     palette = Path(workdir) / "palette.png"
     output = Path(output)
     if samples:
-        graph, mapped = _sample_graph(profile, len(samples), palette=True, stream_index=stream_index, sdr=sdr)
-        palette_args = _base_ffmpeg() + _sample_inputs(input_path, samples, seek, clip) + [
+        graph, mapped = _sample_graph(profile, len(samples), palette=True, stream_index=stream_index, sdr=sdr,
+                                       samples=samples, seek=seek, input_seek=input_seek)
+        palette_args = _base_ffmpeg() + _sample_inputs(input_path, samples, seek, clip, input_seek) + [
             "-filter_complex", graph, "-map", mapped, "-frames:v", "1", str(palette)
         ]
         runner.capture(palette_args, "FFmpeg could not generate a GIF palette.")
-        graph, base = _sample_graph(profile, len(samples), palette=False, stream_index=stream_index, sdr=sdr)
+        graph, base = _sample_graph(profile, len(samples), palette=False, stream_index=stream_index, sdr=sdr,
+                                    samples=samples, seek=seek, input_seek=input_seek)
         palette_index = len(samples)
         graph += f";{base}[{palette_index}:v]paletteuse=dither={profile.dither}:diff_mode=rectangle[out]"
         sample_duration = sum(length for _, length in samples)
-        encode_args = _base_ffmpeg() + _sample_inputs(input_path, samples, seek, clip) + ["-i", str(palette),
+        encode_args = _base_ffmpeg() + _sample_inputs(input_path, samples, seek, clip, input_seek) + ["-i", str(palette),
             "-filter_complex", graph, "-map", "[out]", "-loop", "0",
             "-progress", "pipe:1", str(output)]
         measured_duration = sample_duration
     else:
-        palette_args = _base_ffmpeg() + _input_args(input_path, seek, clip) + ["-map", f"0:{stream_index}", "-vf",
-            f"{_vf(profile, sdr)},palettegen=max_colors={profile.colors}:stats_mode=diff",
+        vf = chain(_trim_filter(input_seek, seek, clip), _vf(profile, sdr))
+        palette_args = _base_ffmpeg() + _input_args(input_path, seek, clip, input_seek) + ["-map", f"0:{stream_index}", "-vf",
+            f"{vf},palettegen=max_colors={profile.colors}:stats_mode=diff",
             "-frames:v", "1", str(palette)]
         runner.capture(palette_args, "FFmpeg could not generate a GIF palette.")
-        graph = f"[0:{stream_index}]{_vf(profile, sdr)}[video];[video][1:v]paletteuse=dither={profile.dither}:diff_mode=rectangle[out]"
-        encode_args = _base_ffmpeg() + _input_args(input_path, seek, clip) + ["-i", str(palette),
+        graph = f"[0:{stream_index}]{vf}[video];[video][1:v]paletteuse=dither={profile.dither}:diff_mode=rectangle[out]"
+        encode_args = _base_ffmpeg() + _input_args(input_path, seek, clip, input_seek) + ["-i", str(palette),
             "-filter_complex", graph, "-map", "[out]", "-loop", "0",
             "-progress", "pipe:1", str(output)]
         measured_duration = duration
@@ -124,12 +154,10 @@ def encode_gif(runner, input_path, output, profile, duration, workdir, samples=N
     return output.stat().st_size
 
 
-# Short side of a target-size video, largest first. Measured with VMAF on real
-# 1080p footage (x264 two-pass): for a given bitrate the best-looking output is
-# the largest of these that still gets about 0.055 bits per pixel. Bigger
-# starves every pixel, smaller throws detail away.
+# Short side of a target-size video, largest first. For a given bitrate the
+# best-looking output is the largest of these that still gets
+# MIN_BITS_PER_PIXEL. Bigger starves every pixel, smaller throws detail away.
 _SHORT_SIDES = (2160, 1440, 1080, 720, 540, 480, 360, 240)
-_MIN_BITS_PER_PIXEL = 0.055
 
 
 def _video_shape(info, video_rate=None, fps=None):
@@ -141,7 +169,7 @@ def _video_shape(info, video_rate=None, fps=None):
         sides = [short] + [side for side in _SHORT_SIDES if side < short]
         for side in sides:
             other = round(long * side / short)
-            if video_rate / (side * other * (fps or info.fps)) >= _MIN_BITS_PER_PIXEL:
+            if video_rate / (side * other * (fps or info.fps)) >= MIN_BITS_PER_PIXEL:
                 break
         width, height = (other, side) if width >= height else (side, other)
     return max(2, width // 2 * 2), max(2, height // 2 * 2)
@@ -165,21 +193,27 @@ def encode_image(runner, input_path, output, info, fmt, width, height, quality=8
                  pass_number=1, passes=1, seek=0.0):
     """Encode exactly one frame, preserving alpha where the format supports it."""
     output = Path(output)
-    common = _input_args(input_path, seek)
+    input_seek = can_seek_input(info)
+    common = _input_args(input_path, seek, input_seek=input_seek)
+    trim = _trim_filter(input_seek, seek)
+    if trim:
+        # A still has no audio timeline; align the selected frame with the
+        # JPEG background at PTS zero instead of emitting background alone.
+        trim = chain(trim, "setpts=PTS-STARTPTS")
     sdr = sdr_filter(info)
     if fmt == "jpg":
         # JPEG has no alpha channel. Composite explicitly instead of relying on
         # an encoder-dependent implicit black background.
         graph = (
             f"color=c=white:s={width}x{height}[bg];"
-            f"[0:{info.stream_index}]{chain(f'scale={width}:{height}:flags=lanczos', sdr)},format=rgba[fg];"
+            f"[0:{info.stream_index}]{chain(trim, f'scale={width}:{height}:flags=lanczos', sdr)},format=rgba[fg];"
             "[bg][fg]overlay=format=auto,format=yuvj420p[out]"
         )
         transform = ["-filter_complex", graph, "-map", "[out]"]
         codec = ["-c:v", "mjpeg", "-q:v", str(max(2, min(31, round((100 - quality) * 0.29 + 2))))]
     else:
         transform = ["-map", f"0:{info.stream_index}", "-vf",
-                     chain(f"scale={width}:{height}:flags=lanczos", sdr, "setsar=1")]
+                     chain(trim, f"scale={width}:{height}:flags=lanczos", sdr, "setsar=1")]
         if fmt == "png":
             codec = ["-c:v", "png", "-compression_level", "9", "-pred", "mixed"]
         elif fmt == "webp":
@@ -212,40 +246,142 @@ def encode_image_quick(runner, input_path, output, info, fmt, preset, seek=0.0):
     return width, height
 
 
-def encode_image_target(runner, input_path, output, info, fmt, requested_bytes, seek=0.0):
-    scales = (1.0, 0.85, 0.7, 0.55, 0.4, 0.3, 0.2, 0.12, 0.06)
-    qualities = (95, 90, 84, 76, 66, 54, 42, 30, 20)
+# Size ladder for an image under a limit, best first: scale and quality
+# fall together, so the encoded size falls step by step.
+_IMAGE_SCALES = (1.0, 0.85, 0.7, 0.55, 0.4, 0.3, 0.2, 0.12, 0.06)
+_IMAGE_QUALITIES = (95, 90, 84, 76, 66, 54, 42, 30, 20)
+# Up to this many pixels the top step is tried first (about 4 MP: a full
+# quality encode there takes well under a second).
+_TRY_TOP_FIRST_PIXELS = 4_000_000
+
+
+def decoded_frame(runner, input_path, info, workdir, seek=0.0):
+    """Decode the one frame an image result is made from, once, into an
+    uncompressed file in `workdir`; every candidate is encoded from it.
+
+    Seeking (or trimming a transport stream) and HDR tone mapping happen
+    here. Without tone mapping the pixel format is kept as decoded, alpha
+    included, so candidates see exactly the frame they saw before. Returns
+    (path, info for that file)."""
+    path = Path(workdir) / "frame.nut"
+    input_seek = can_seek_input(info)
+    trim = _trim_filter(input_seek, seek)
+    if trim:
+        trim = chain(trim, "setpts=PTS-STARTPTS")
+    filters = chain(trim, sdr_filter(info))
+    runner.capture(_base_ffmpeg() + _input_args(input_path, seek, input_seek=input_seek)
+                   + ["-map", f"0:{info.stream_index}"] + (["-vf", filters] if filters else [])
+                   + ["-frames:v", "1", "-c:v", "rawvideo", "-f", "nut", str(path)],
+                   "FFmpeg could not read this image.")
+    runner.check_cancelled()
+    # The frame is upright, SDR and alone in its file.
+    return path, replace(info, stream_index=0, transfer="", format_name="nut", duration=0.0)
+
+
+def encode_image_target(runner, input_path, output, info, fmt, requested_bytes, seek=0.0,
+                        exhaustive=False):
+    """Encode the best ladder step that fits `requested_bytes`.
+
+    The ladder is monotonic, so a binary search finds the first fitting step
+    in about 3 encodes instead of walking down 5-7 of them; the step above
+    the answer is checked too, in case two neighbours break monotonicity.
+    `exhaustive` walks the ladder top-down (the reference the search must
+    agree with in tests)."""
     runner.sink.emit("analyzing", progress=0.0, target_bytes=requested_bytes,
-                     internal_target_bytes=int(requested_bytes * 0.97))
-    smallest = None
-    for number, (scale, quality) in enumerate(zip(scales, qualities), 1):
-        width, height = _image_dimensions(info, scale)
-        candidate = output.with_name(f"candidate-{number}.{fmt}")
-        candidate.unlink(missing_ok=True)
-        size = encode_image(runner, input_path, candidate, info, fmt, width, height,
-                            quality, number, len(scales), seek)
-        runner.sink.emit("candidate", width=width, height=height, fps=0.0,
-                         estimated_bytes=size, progress=number / len(scales))
-        if smallest is None or size < smallest[0]:
-            if smallest is not None:
-                smallest[3].unlink(missing_ok=True)
-            smallest = (size, width, height, candidate)
-        elif candidate != smallest[3]:
+                     internal_target_bytes=int(requested_bytes * SIZE_HEADROOM))
+    count = len(_IMAGE_SCALES)
+    planned = count if exhaustive else math.ceil(math.log2(count + 1)) + 1
+    frame, frame_info = decoded_frame(runner, input_path, info, output.parent, seek)
+    sizes = {}
+
+    def size_of(step):
+        if step not in sizes:
+            width, height = _image_dimensions(info, _IMAGE_SCALES[step])
+            candidate = output.with_name(f"candidate-{step + 1}.{fmt}")
             candidate.unlink(missing_ok=True)
-        if size <= requested_bytes:
-            output.unlink(missing_ok=True)
-            candidate.replace(output)
-            if smallest is not None and smallest[3] != candidate:
-                smallest[3].unlink(missing_ok=True)
-            runner.sink.emit("analyzing", progress=1.0)
-            return width, height
-    smallest_size = smallest[0] if smallest else None
-    if smallest is not None:
-        smallest[3].unlink(missing_ok=True)
-    raise OmaConvertError(
-        f"This image cannot reasonably fit into {size_text(requested_bytes)}.",
-        f"Smallest result found: {smallest_size} bytes.",
-    )
+            number = len(sizes) + 1
+            size = encode_image(runner, frame, candidate, frame_info, fmt, width, height,
+                                _IMAGE_QUALITIES[step], number, max(planned, number))
+            sizes[step] = (size, width, height, candidate)
+            runner.sink.emit("candidate", width=width, height=height, fps=0.0, estimated_bytes=size,
+                             progress=min(0.95, number / planned))
+        return sizes[step][0]
+
+    best = None
+    if exhaustive:
+        for step in range(count):
+            if size_of(step) <= requested_bytes:
+                best = step
+                break
+    else:
+        low, high = 0, count - 1
+        # Small images often fit at full quality: one cheap encode settles it.
+        if info.width * info.height <= _TRY_TOP_FIRST_PIXELS:
+            if size_of(0) <= requested_bytes:
+                best, high = 0, -1
+            else:
+                low = 1
+        while low <= high:
+            middle = (low + high) // 2
+            if size_of(middle) <= requested_bytes:
+                best, high = middle, middle - 1
+            else:
+                low = middle + 1
+        while best is not None and best > 0 and best - 1 not in sizes:
+            if size_of(best - 1) > requested_bytes:
+                break
+            best -= 1
+    try:
+        if best is None:
+            smallest = min(size for size, *_ in sizes.values())
+            raise OmaConvertError(
+                f"This image cannot reasonably fit into {size_text(requested_bytes)}.",
+                f"Smallest result found: {smallest} bytes.",
+            )
+        _size, width, height, candidate = sizes[best]
+        output.unlink(missing_ok=True)
+        candidate.replace(output)
+        runner.sink.emit("analyzing", progress=1.0)
+        return width, height
+    finally:
+        for _size, _w, _h, candidate in sizes.values():
+            candidate.unlink(missing_ok=True)
+        frame.unlink(missing_ok=True)
+
+
+# libvpx encodes one tile row at a time unless told otherwise: row
+# multithreading made a 20 s 540p two-pass WebM 28% faster on 4 cores with
+# the same output size and SSIM.
+_VP9_THREADS = ("-row-mt", "1")
+# Speed of a target-size WebM. On a real 10 s 1080p clip, -cpu-used 4
+# instead of 2 made the second pass 42-45 % faster for 0.1-0.2 VMAF points
+# (far below a visible step) and a 4-6 % larger file, still under the
+# limit thanks to SIZE_HEADROOM. The first pass is fast at either setting.
+_VP9_TARGET_SPEED = ("-deadline", "good", "-cpu-used", "4")
+
+
+def _video_codec(fmt, video, audio_rate, vp9_speed=()):
+    """Codec arguments for a video file: H.264 + AAC for mp4/mov/mkv, VP9 +
+    Opus for WebM. `video` is the rate control (CRF or bitrate and pass);
+    8-bit 4:2:0 whatever the source (10-bit phone clips, 4:4:4 screen
+    recordings): High 10/4:4:4 H.264 and VP9 profile 1/2 do not play in
+    browsers and chat apps. Returns (video args, audio args)."""
+    if fmt in ("mp4", "mov", "mkv"):
+        video_args = ["-c:v", "libx264", "-preset", "medium", *video, "-pix_fmt", "yuv420p"]
+        audio_args = ["-c:a", "aac", "-b:a", str(audio_rate)]
+        if fmt in ("mp4", "mov"):
+            audio_args += ["-movflags", "+faststart"]
+    else:
+        video_args = ["-c:v", "libvpx-vp9", *_VP9_THREADS, *vp9_speed, *video, "-pix_fmt", "yuv420p"]
+        audio_args = ["-c:a", "libopus", "-b:a", str(audio_rate)]
+    return video_args, audio_args
+
+
+def _audio_trim(info, input_seek, seek, clip):
+    """-af for sources trimmed in the filter graph instead of by seeking."""
+    if info.audio and not input_seek and (seek or clip is not None):
+        return ["-af", _trim_filter(input_seek, seek, clip, audio=True)]
+    return []
 
 
 def encode_video_quick(runner, input_path, output, info, fmt, preset, seek=0.0, clip=None):
@@ -257,17 +393,16 @@ def encode_video_quick(runner, input_path, output, info, fmt, preset, seek=0.0, 
     cap, crf, fps_cap = settings[preset]
     width, height = _quick_shape(info, cap)
     fps = min(info.fps, fps_cap)
-    vf = chain(f"fps={fps:.6g}", f"scale={width}:{height}:flags=lanczos", sdr_filter(info), "setsar=1")
-    common = _input_args(input_path, seek, clip) + ["-vf", vf,
+    input_seek = can_seek_input(info)
+    vf = chain(_trim_filter(input_seek, seek, clip), f"fps={fps:.6g}",
+               f"scale={width}:{height}:flags=lanczos", sdr_filter(info), "setsar=1")
+    common = _input_args(input_path, seek, clip, input_seek) + ["-vf", vf,
               "-map", f"0:{info.stream_index}", "-map", "0:a:0?", "-progress", "pipe:1"]
     if fmt in ("mp4", "mov", "mkv"):
-        codec = ["-c:v", "libx264", "-preset", "medium", "-crf", str(crf),
-                 "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k"]
-        if fmt in ("mp4", "mov"):
-            codec += ["-movflags", "+faststart"]
+        video, audio = _video_codec(fmt, ["-crf", str(crf)], "128k")
     else:
-        codec = ["-c:v", "libvpx-vp9", "-crf", str(crf + 4), "-b:v", "0", "-pix_fmt", "yuv420p",
-                 "-c:a", "libopus", "-b:a", "96k"]
+        video, audio = _video_codec(fmt, ["-crf", str(crf + 4), "-b:v", "0"], "96k")
+    codec = video + audio + _audio_trim(info, input_seek, seek, clip)
     progress_fields = {"pass": 1, "passes": 1, "width": width, "height": height, "fps": fps}
     runner.sink.emit("encoding", progress=0.0, **progress_fields)
     runner.ffmpeg(_base_ffmpeg() + common + codec + [str(output)], info.duration,
@@ -275,42 +410,38 @@ def encode_video_quick(runner, input_path, output, info, fmt, preset, seek=0.0, 
     return width, height, fps
 
 
-# Sound of a target-size video, budgeted before the video bitrate.
-TARGET_AUDIO_RATE = 96_000
-
-
 def encode_video_target(runner, input_path, output, info, fmt, internal_target, attempt=1,
-                        bitrate_override=None, seek=0.0, clip=None):
+                        bitrate_override=None, seek=0.0, clip=None, first_shape=None):
+    """Two-pass encode at the bitrate for `internal_target` bytes. A retry
+    passes `first_shape`, the (width, height) of attempt 1: at the same
+    frame size its pass-1 statistics, which do not depend on the bitrate,
+    are reused and only the second pass runs again."""
     audio_rate = TARGET_AUDIO_RATE if info.audio else 0
     total_rate = internal_target * 8 / info.duration
-    video_rate = int(bitrate_override or ((total_rate - audio_rate) * 0.96))
-    if video_rate < 60_000:
+    video_rate = int(bitrate_override or ((total_rate - audio_rate) * VIDEO_RATE_SHARE))
+    if video_rate < MIN_VIDEO_BITRATE:
         raise OmaConvertError(
             "The requested size is too small for this video's duration.",
             "Try a larger target or a shorter clip.",
         )
     fps = min(info.fps, 30.0)
     width, height = _video_shape(info, video_rate, fps)
-    passlog = str(Path(output).with_name(f"passlog-{attempt}"))
-    vf = chain(f"fps={fps:.6g}", f"scale={width}:{height}:flags=lanczos", sdr_filter(info), "setsar=1")
-    # 8-bit 4:2:0 whatever the source (10-bit phone clips, 4:4:4 screen
-    # recordings): High 10/4:4:4 H.264 and VP9 profile 1/2 do not play in
-    # browsers and chat apps. Same in both passes so the pass log matches.
-    if fmt in ("mp4", "mov", "mkv"):
-        video_codec = ["-c:v", "libx264", "-preset", "medium", "-pix_fmt", "yuv420p"]
-        audio_codec = ["-c:a", "aac", "-b:a", str(TARGET_AUDIO_RATE)]
-        if fmt in ("mp4", "mov"):
-            audio_codec += ["-movflags", "+faststart"]
-    else:
-        video_codec = ["-c:v", "libvpx-vp9", "-deadline", "good", "-cpu-used", "2", "-pix_fmt", "yuv420p"]
-        audio_codec = ["-c:a", "libopus", "-b:a", str(TARGET_AUDIO_RATE)]
-    first = _base_ffmpeg() + _input_args(input_path, seek, clip) + ["-map", f"0:{info.stream_index}", "-vf", vf,
+    reuse = attempt > 1 and first_shape == (width, height)
+    passlog = str(Path(output).with_name(f"passlog-{1 if reuse else attempt}"))
+    input_seek = can_seek_input(info)
+    vf = chain(_trim_filter(input_seek, seek, clip), f"fps={fps:.6g}",
+               f"scale={width}:{height}:flags=lanczos", sdr_filter(info), "setsar=1")
+    # Same codec arguments in both passes so the pass log matches.
+    video_codec, audio_codec = _video_codec(fmt, [], TARGET_AUDIO_RATE,
+                                            vp9_speed=_VP9_TARGET_SPEED)
+    audio_codec += _audio_trim(info, input_seek, seek, clip)
+    first = _base_ffmpeg() + _input_args(input_path, seek, clip, input_seek) + ["-map", f"0:{info.stream_index}", "-vf", vf,
         *video_codec, "-b:v", str(video_rate), "-pass", "1", "-passlogfile", passlog,
         "-an", "-f", "null", "-progress", "pipe:1", os.devnull]
-    second = _base_ffmpeg() + _input_args(input_path, seek, clip) + ["-map", f"0:{info.stream_index}", "-map", "0:a:0?", "-vf", vf,
+    second = _base_ffmpeg() + _input_args(input_path, seek, clip, input_seek) + ["-map", f"0:{info.stream_index}", "-map", "0:a:0?", "-vf", vf,
         *video_codec, "-b:v", str(video_rate), "-pass", "2", "-passlogfile", passlog,
         *audio_codec, "-progress", "pipe:1", str(output)]
-    for number, args in ((1, first), (2, second)):
+    for number, args in ((2, second),) if reuse else ((1, first), (2, second)):
         progress_fields = {
             "pass": number, "passes": 2, "attempt": attempt,
             "width": width, "height": height, "fps": fps,
@@ -328,13 +459,16 @@ def encode_png_sequence(runner, input_path, folder, info, fps=None, seek=0.0, cl
     folder = Path(folder)
     folder.mkdir()
     rate = min(float(fps), info.fps) if fps and info.fps > 0 else float(fps or info.fps or 0)
-    filters = [f"fps={rate:.6g}"] if fps else []
-    filters += [sdr_filter(info), "setsar=1"]
+    input_seek = can_seek_input(info)
+    filters = [_trim_filter(input_seek, seek, clip)]
+    if fps:
+        filters.append(f"fps={rate:.6g}")
+    filters += [f"scale={info.width}:{info.height}:flags=lanczos", sdr_filter(info), "setsar=1"]
     progress_fields = {"pass": 1, "passes": 1, "width": info.width, "height": info.height, "fps": rate}
     runner.sink.emit("encoding", progress=0.0, **progress_fields)
-    runner.ffmpeg(_base_ffmpeg() + _input_args(input_path, seek, clip)
+    runner.ffmpeg(_base_ffmpeg() + _input_args(input_path, seek, clip, input_seek)
                   + ["-map", f"0:{info.stream_index}", "-vf", chain(*filters),
-                     "-c:v", "png", "-start_number", "1", "-progress", "pipe:1",
+                     "-c:v", "png", "-start_number", "1", "-fps_mode", "passthrough", "-progress", "pipe:1",
                      str(folder / "frame-%06d.png")],
                   info.duration, **progress_fields)
     count = sum(1 for _ in folder.glob("frame-*.png"))

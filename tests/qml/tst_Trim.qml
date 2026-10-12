@@ -1,6 +1,7 @@
 import QtQuick
 import QtTest
 import "../../components" as Components
+import "../../components/ui" as Ui
 
 // TrimBar: range setters mirror to start/end; scrub requests follow the
 // moved handle (debounced noteMove, immediate scrubNow); moveActive
@@ -10,8 +11,11 @@ TestCase {
     width: 600
     height: 400
 
+    Ui.Theme { id: stubTheme }
+
     Components.TrimBar {
         id: trim
+        theme: stubTheme
         duration: 12
         width: 500
     }
@@ -36,13 +40,22 @@ TestCase {
     }
 
     function test_scrubRouting() {
+        // A move gives a draft frame quickly, then the exact frame once it rests.
         scrubSpy.clear()
         trim.noteMove(4)
-        tryCompare(scrubSpy, "count", 1, 2000)
+        tryCompare(scrubSpy, "count", 2, 2000)
         compare(scrubSpy.signalArguments[0][0], 4)
+        compare(scrubSpy.signalArguments[0][1], true)
+        compare(scrubSpy.signalArguments[1][0], 4)
+        compare(scrubSpy.signalArguments[1][1], false)
+        // Release asks for the exact frame at once and cancels a pending draft.
+        trim.noteMove(5)
         trim.scrubNow(7)
-        compare(scrubSpy.count, 2)
-        compare(scrubSpy.signalArguments[1][0], 7)
+        compare(scrubSpy.count, 3)
+        compare(scrubSpy.signalArguments[2][0], 7)
+        compare(scrubSpy.signalArguments[2][1], false)
+        wait(700)
+        compare(scrubSpy.count, 3)
     }
 
     function test_moveActiveClamps() {

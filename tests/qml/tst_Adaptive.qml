@@ -1,6 +1,7 @@
 import QtQuick
 import QtTest
 import "../../components" as Components
+import "../../components/ui" as Ui
 
 // Adaptive layout: Before/After sit side by side on wide windows and
 // stack vertically on narrow ones (Flow wraps when a child stops fitting).
@@ -10,8 +11,11 @@ TestCase {
     height: 600
     visible: false
 
+    Ui.Theme { id: stubTheme }
+
     Components.ResultView {
         id: wide
+        theme: stubTheme
         result: ({path: "/tmp/a.gif", bytes: 1000, width: 320, height: 240, fps: 10.0})
         sourcePreview: "before"
         resultPreview: "after"
@@ -19,6 +23,7 @@ TestCase {
     }
     Components.ResultView {
         id: narrow
+        theme: stubTheme
         result: ({path: "/tmp/a.gif", bytes: 1000, width: 320, height: 240, fps: 10.0})
         sourcePreview: "before"
         resultPreview: "after"

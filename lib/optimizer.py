@@ -35,7 +35,6 @@ class GifProfile:
     colors: int
     dither: str
     lossy: int
-    quality: float
 
 
 def _even_at_most(value, maximum):
@@ -87,15 +86,9 @@ def build_gif_profiles(source_width, source_height, source_fps, preference="bala
         if key in seen:
             continue
         seen.add(key)
-        resolution = (width * height) / (source_width * source_height)
-        motion = fps / source_fps
-        palette = math.log2(color_count) / 8
-        weights = {"motion": (0.48, 0.38), "balanced": (0.58, 0.28), "detail": (0.68, 0.18)}
-        rw, fw = weights[preference]
-        quality = rw * resolution + fw * motion + 0.14 * palette - lossy / 1000
-        profiles.append(GifProfile(width, height, fps, color_count, dither, lossy, quality))
+        profiles.append(GifProfile(width, height, fps, color_count, dither, lossy))
     minimum_width, minimum_height = _dimensions(source_width, source_height, min(320, source_width))
-    minimum = GifProfile(minimum_width, minimum_height, min(5.0, source_fps), 32, "bayer", 120, -1.0)
+    minimum = GifProfile(minimum_width, minimum_height, min(5.0, source_fps), 32, "bayer", 120)
     if not profiles or profiles[-1] != minimum:
         profiles = [profile for profile in profiles if (profile.width, profile.fps, profile.colors) != (minimum.width, minimum.fps, 32)]
         profiles.append(minimum)
@@ -111,22 +104,4 @@ def representative_samples(duration):
     length = min(1.0, duration / 5.0)
     starts = [0.0, max(0.0, duration / 2 - length / 2), max(0.0, duration - length)]
     return [(round(start, 6), round(min(length, duration - start), 6)) for start in starts]
-
-
-def sample_search_indices(count):
-    """Return a deterministic coarse-to-fine order over a quality ladder."""
-    if count <= 0:
-        return []
-    order = []
-    pending = [(0, count - 1)]
-    while pending:
-        low, high = pending.pop(0)
-        middle = (low + high) // 2
-        if middle not in order:
-            order.append(middle)
-        if low < middle:
-            pending.append((low, middle - 1))
-        if middle < high:
-            pending.append((middle + 1, high))
-    return order
 

@@ -11,7 +11,7 @@ Everything the [README](../README.md) leaves out.
 3. **Pick a recipe**, or type in the `❯` line above the list. The size bar shows the source against the limit, so you see how much has to go.
 4. **⚙ settings** (Ctrl+,) opens every field: format, mode, max size with presets (Discord 10 MB, X GIF 15 MB, email 25 MB, web 500 KB), GIF preference, quick quality, frame rate for sequences and the output folder. The fields and the line stay in sync, and **Will make** shows the file name you will get.
 
-**Several files at once.** Select files in the file manager and use Open With, drop or paste several files, or pick several in the dialog. They open as a **batch**: one list with each file's size, one recipe for all of them, converted one after another. A file that cannot be read is marked and skipped, and files of the other kind (videos in a batch of images) are left out. Trimming is for one video at a time.
+**Several files at once.** Select files in the file manager and use Open With, drop or paste several files, or pick several in the dialog. They open as a **batch**: one list with each file's size, one recipe for all of them. Still images convert up to three at a time; videos and GIFs one after another, since their encoders already use every core. A file that cannot be read is marked and skipped, and files of the other kind (videos in a batch of images) are left out. Trimming is for one video at a time.
 
 **Pin the recipes you use.** Ctrl+D (or ★ pin next to Convert in the settings) pins the highlighted recipe, such as `jpg 150kb` for your website. Pinned recipes are listed first for that kind of file, up to six of them. Ctrl+D again unpins.
 
@@ -62,6 +62,7 @@ The tool aims at 97% of the limit. MP4 and WebM use two-pass encoding with a cor
 - Converted files go next to the source, or into the folder chosen under **Save to**.
 - Preferences: `~/.config/omaconvert/preferences.ini`. It stores the last recipe and other settings, plus the output folder only if you ask it to remember it. File names are never saved.
 - Preview thumbnails: `~/.cache/omaconvert/previews`, at most two small PNGs, readable only by you (0600 in a 0700 folder). They are deleted when the preview is cleared or the window closes.
+- FFmpeg's list of encoders, formats and filters: `~/.cache/omaconvert/toolbox.json`, refreshed when the `ffmpeg` executable changes.
 - Results are never readable by more people than their source: converting a private (0600) file gives a private file.
 - Only after you switch on Open With: `~/.local/share/applications/io.github.smorshenniygus.omaconvert.desktop`. Switching it off removes the file.
 - Only after you switch on the hotkey: a block between `-- >>> OmaConvert hotkey` and `-- <<< OmaConvert hotkey` in `~/.config/hypr/bindings.lua`.
@@ -83,7 +84,7 @@ omaconvert *.png --format jpg --max-size 200KB --output-dir ~/Pictures/web   # a
 omaconvert --capabilities      # which formats this FFmpeg can write
 ```
 
-Every stdout line is a JSON event: `probe`, `analyzing`, `candidate`, `encoding`, `optimizing`, and finally `complete`, `error` or `cancelled`. The `complete` event carries the output path and measured size. Ctrl+C or SIGTERM stops the job and its encoders. A stalled encode is stopped after 300 seconds without progress; set `OMACONVERT_STALL_TIMEOUT` to change this, or to `0` to disable it.
+Every stdout line is a JSON event: `probe`, `analyzing`, `candidate`, `encoding`, `optimizing`, and finally `complete`, `error` or `cancelled`. The `complete` event carries the output path and measured size. A batch reports `item`, then `item-complete` or `item-error` for each file and ends with `batch-complete`, whose `paths` follow the input order. Every event of a file carries its `index`: files of an image batch run side by side and can finish in any order. Ctrl+C or SIGTERM stops the job and its encoders. A stalled encode is stopped after 300 seconds without progress; set `OMACONVERT_STALL_TIMEOUT` to change this, or to `0` to disable it.
 
 ## Development
 
@@ -92,5 +93,7 @@ scripts/check.sh
 ```
 
 This runs the Python tests, the Qt Quick tests, `omarchy plugin validate` on the git-tracked files, and `qmllint` against the installed shell. The Python tests encode real clips with FFmpeg. They check byte limits, Unicode and bracketed file names, safe publishing on filesystems without hard links, cancellation and hung tools.
+
+Where things live: `lib/` is the backend and its JSON CLI. `services/Session.qml` holds what the window does (recipes, the command line and fields, the current screen, starting a job). `ConvertService.qml` and `PreviewService.qml` run the CLI. `OmaConvert.qml` is the window: it wires these to one component per section in `components/screens/`, built from `components/ui/` and styled by a single `Theme` object.
 
 After a change to the installed plugin, run `omarchy plugin update io.github.smorshenniygus.omaconvert --yes`, then `omarchy restart shell`. The shell caches plugin QML, and the window shows a warning while the loaded interface is older than the backend.

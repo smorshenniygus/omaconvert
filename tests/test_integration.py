@@ -255,7 +255,8 @@ class OmaConvertIntegrationTests(unittest.TestCase):
             probe = self.run_cli("--probe", source)[1]
             self.assertEqual(probe[-1].get("transfer"), transfer)
             for fmt, mode in (("mp4", ("--max-size", "2MB")), ("webm", ("--preset", "balanced")),
-                              ("gif", ("--max-size", "2MB")), ("jpg", ("--max-size", "200KB"))):
+                              ("gif", ("--max-size", "2MB")),
+                              ("jpg", ("--max-size", "200KB", "--trim-start", "0.5"))):
                 with self.subTest(transfer=transfer, format=fmt):
                     output = self.work_path / f"sdr-{transfer}.{fmt}"
                     completed, events = self.run_cli(source, "--format", fmt, *mode, "--output", output)
@@ -265,6 +266,12 @@ class OmaConvertIntegrationTests(unittest.TestCase):
                     if fmt in ("mp4", "webm"):
                         self.assertEqual(video.get("color_transfer"), "bt709")
                         self.assertEqual(video.get("color_primaries"), "bt709")
+                    if fmt == "jpg":
+                        # The still keeps its picture: a tone-mapped frame used
+                        # to come out as a blank white JPEG.
+                        gray = subprocess.run([FFMPEG, "-v", "error", "-i", str(produced), "-vf", "format=gray",
+                                               "-f", "rawvideo", "-"], capture_output=True, check=True).stdout
+                        self.assertLess(sum(gray) / len(gray), 220)
 
     def test_sigterm_cancels_job_without_orphan_encoder_or_temp_files(self) -> None:
         source = self.work_path / "long-source.mp4"

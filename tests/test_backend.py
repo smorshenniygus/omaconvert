@@ -15,7 +15,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from lib.encoders import _video_shape, encode_video_quick, parse_ffmpeg_progress
+from lib.encoders import _video_shape, encode_video_quick, encode_video_target, parse_ffmpeg_progress
 from lib.backend import _convert_gif, _default_output, convert
 from lib.errors import Cancelled, OmaConvertError
 from lib.events import EventSink
@@ -26,7 +26,7 @@ from lib.optimizer import (
     size_text,
 )
 from lib.probe import parse_probe_json
-from lib.probe import MediaInfo
+from lib.probe import MediaInfo, probe_media
 from lib.process import ProcessRunner
 from lib.publish import publish_no_clobber
 
@@ -397,6 +397,47 @@ class ProcessRunnerTests(unittest.TestCase):
             self.assertEqual(process.stall_timeout(), process.DEFAULT_STALL_TIMEOUT)
 
 
+@unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg required")
+class TwoPassRetryTests(unittest.TestCase):
+    """A size retry at the same frame size reuses the pass-1 statistics: the
+    encoders accept them at another bitrate, so only pass 2 runs again."""
+
+    class Runner(ProcessRunner):
+        def __init__(self):
+            super().__init__(mock.Mock())
+            self.passes = []
+
+        def ffmpeg(self, args, duration, **fields):
+            self.passes.append((fields["pass"], args[args.index("-passlogfile") + 1]))
+            super().ffmpeg(args, duration, **fields)
+
+    def test_retry_runs_only_the_second_pass(self):
+        with tempfile.TemporaryDirectory(prefix="omaconvert-twopass-") as directory:
+            root = Path(directory)
+            source = root / "clip.mkv"
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=15",
+                            "-t", "2", "-c:v", "ffv1", str(source)], check=True)
+            info = probe_media(source, ProcessRunner(mock.Mock()))
+            for fmt in ("mp4", "webm"):
+                with self.subTest(fmt=fmt):
+                    runner = self.Runner()
+                    output = root / f"result.{fmt}"
+                    width, height, _fps, rate = encode_video_target(runner, source, output, info, fmt, 200_000)
+                    first_size = output.stat().st_size
+                    output.unlink()
+                    encode_video_target(runner, source, output, info, fmt, 200_000, attempt=2,
+                                        bitrate_override=rate // 2, first_shape=(width, height))
+                    self.assertEqual([number for number, _log in runner.passes], [1, 2, 2])
+                    self.assertEqual(len({log for _number, log in runner.passes}), 1, "attempt 1's log")
+                    self.assertLess(output.stat().st_size, first_size)
+                    self.assertEqual(probe_media(output, ProcessRunner(mock.Mock())).width, width)
+                    # Another frame size needs its own first pass.
+                    runner.passes.clear()
+                    encode_video_target(runner, source, output, info, fmt, 200_000, attempt=2,
+                                        bitrate_override=rate // 2, first_shape=(width + 2, height))
+                    self.assertEqual([number for number, _log in runner.passes], [1, 2])
+
+
 class TerminalMetadataTests(unittest.TestCase):
     def test_output_probe_failure_names_the_output_not_the_input(self):
         from lib import backend
@@ -644,6 +685,38 @@ class ImageConversionTests(unittest.TestCase):
         output = Path(result["path"])
         self.assertLessEqual(output.stat().st_size, cap)
         self.assertLess(result["width"], 1200)
+
+    def test_image_target_search_matches_the_full_walk(self):
+        """The binary search over the size ladder picks the same step (same
+        bytes) as walking it top-down, with and without alpha."""
+        from lib.encoders import encode_image_target
+        from lib.probe import probe_media
+        sources = {
+            "noise.png": "nullsrc=s=1400x1000,geq=random(1)*255:128:random(2)*255",
+            "bars.png": "testsrc2=s=1600x900",
+            "alpha.png": "testsrc2=s=1200x800,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='255*X/W'",
+            "small.png": "testsrc2=s=640x480",
+        }
+        cases = [("noise.png", "jpg", 90_000), ("noise.png", "webp", 60_000), ("bars.png", "png", 400_000),
+                 ("alpha.png", "webp", 40_000), ("alpha.png", "png", 300_000), ("small.png", "jpg", 500_000)]
+        for name, graph in sources.items():
+            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+                            "-i", graph, "-frames:v", "1", str(self.root / name)], check=True)
+        for name, fmt, limit in cases:
+            with self.subTest(name=name, fmt=fmt, limit=limit):
+                source = self.root / name
+                info = probe_media(source, self.runner)
+                results = {}
+                for exhaustive in (False, True):
+                    work = self.root / f"work-{name}-{fmt}-{exhaustive}"
+                    work.mkdir()
+                    out = work / f"out.{fmt}"
+                    shape = encode_image_target(self.runner, source, out, info, fmt, limit,
+                                                exhaustive=exhaustive)
+                    results[exhaustive] = (shape, out.stat().st_size)
+                    self.assertLessEqual(out.stat().st_size, limit)
+                    self.assertEqual(sorted(p.name for p in work.iterdir()), [out.name])
+                self.assertEqual(results[False], results[True])
 
     def test_transparency_survives_png_and_webp(self):
         source = self.make_rgba_png()

@@ -12,6 +12,7 @@ import subprocess
 from urllib.parse import unquote, urlparse
 
 from .launcher import PLUGIN_ID, ROOT
+from .tuning import OFFER_ABOVE_BYTES
 
 IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif", "image/bmp": "bmp"}
 # Hyprland modmask bits.
@@ -24,8 +25,6 @@ HOTKEYS = [
 ]
 BLOCK_START = "-- >>> OmaConvert hotkey (added from the OmaConvert window; remove it there)"
 BLOCK_END = "-- <<< OmaConvert hotkey"
-# Chat apps cap uploads at about this; smaller recordings need no offer.
-OFFER_ABOVE_BYTES = 10_000_000
 
 
 def _run(args, binary=False, timeout=5):
