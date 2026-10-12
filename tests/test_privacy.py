@@ -64,6 +64,18 @@ class PrivacyTests(unittest.TestCase):
         self.assertEqual(mode(self.previews), 0o700)
         self.assertEqual(mode(self.previews.parent), 0o700)
 
+    def test_a_preview_folder_that_is_a_link_is_refused(self):
+        # The window loads the thumbnail written there: a link (for example
+        # into a folder someone else controls) is never written through.
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        self.previews.parent.mkdir(parents=True)
+        self.previews.symlink_to(elsewhere)
+        code, events = self.run_cli("--preview", self.source, "--preview-output", self.previews / "src-preview.png")
+        self.assertEqual(code, 2)
+        self.assertIn("not a private folder", events[-1]["message"])
+        self.assertEqual(list(elsewhere.iterdir()), [])
+
     def test_forget_deletes_the_cached_copy(self):
         target = self.previews / "res-preview.png"
         self.run_cli("--preview", self.source, "--preview-output", target)

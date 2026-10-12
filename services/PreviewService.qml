@@ -12,8 +12,10 @@ Item {
     id: root
     required property string executable
 
+    // Never a shared folder such as /tmp: the backend refuses a preview
+    // folder that is not the user's own.
     readonly property string cacheBase: (Quickshell.env("XDG_CACHE_HOME")
-        || ((Quickshell.env("HOME") || "/tmp") + "/.cache")) + "/omaconvert/previews"
+        || (Quickshell.env("HOME") + "/.cache")) + "/omaconvert/previews"
     readonly property string sourcePath: cacheBase + "/src-preview.png"
     readonly property string resultPath: cacheBase + "/res-preview.png"
 

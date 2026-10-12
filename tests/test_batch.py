@@ -180,6 +180,15 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(json.loads(rest.strip().splitlines()[-1])["event"], "cancelled")
         self.assertEqual(list(out.iterdir()), [], "nothing published, no work folders left")
 
+    def test_a_relative_name_starting_with_a_dash_is_a_file(self):
+        # Never an FFmpeg option: inputs are made absolute first.
+        shutil.copy(self.images[0], self.root / "-i.png")
+        done = subprocess.run([str(CLI), "--format", "jpg", "--max-size", "40KB", "--", "-i.png"],
+                              cwd=self.root, capture_output=True, text=True, timeout=120)
+        events = [json.loads(line) for line in done.stdout.splitlines() if line.strip()]
+        self.assertEqual(events[-1]["event"], "complete", events[-1])
+        self.assertTrue(Path(events[-1]["path"]).is_file())
+
     def test_single_input_still_reports_complete(self):
         code, events = self.run_cli(self.images[0], "--format", "jpg", "--max-size", "40KB")
         self.assertEqual(code, 0)

@@ -69,6 +69,7 @@ sys.stdout.buffer.write(data.encode("latin-1"))
         self.assertEqual(path.parent, self.home / "Pictures" / "OmaConvert")
         self.assertTrue(path.name.startswith("pasted-") and path.suffix == ".png")
         self.assertEqual(path.read_bytes()[:4], b"\x89PNG")
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600, "a pasted screenshot is owner-only")
 
     def test_copied_file_from_a_file_manager(self):
         video = self.home / "Видео [1] #2.mp4"
@@ -264,6 +265,18 @@ class RecordingOfferTests(DesktopTestCase):
         path = self.recording(4_000_000)
         _code, events = self.run_cli("--offer-recording", str(path))
         self.assertEqual(events[-1]["offered"], False)
+        self.assertEqual(self.calls("omarchy-notification-send"), [])
+
+    def test_only_the_users_own_regular_file_is_offered(self):
+        # The path comes from Omarchy's marker: a folder or a pipe there is
+        # never offered (a file of another account neither, by owner).
+        pipe = self.home / "pipe.mp4"
+        os.mkfifo(pipe)
+        folder = self.home / "folder.mp4"
+        folder.mkdir()
+        for path in (pipe, folder):
+            _code, events = self.run_cli("--offer-recording", str(path))
+            self.assertEqual((events[-1]["offered"], events[-1]["reason"]), (False, "not-yours"))
         self.assertEqual(self.calls("omarchy-notification-send"), [])
 
     def test_missing_file_is_left_alone(self):

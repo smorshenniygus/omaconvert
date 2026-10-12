@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import selectors
 import shutil
+import stat
 import subprocess
 import time
 from urllib.parse import unquote, urlparse
@@ -125,7 +126,9 @@ def _paste():
             for number in range(1, 100):
                 target = folder / f"pasted-{stamp}{'' if number == 1 else f'-{number}'}.{IMAGE_TYPES[image]}"
                 try:
-                    with open(target, "xb") as handle:
+                    # The clipboard may hold anything (a screenshot of a
+                    # private window): the saved copy is owner-only.
+                    with os.fdopen(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as handle:
                         handle.write(data)
                     return {"kind": "file", "path": str(target), "paths": [str(target)], "source": "image"}
                 except FileExistsError:
@@ -221,9 +224,15 @@ def offer_recording(path):
     """Notify that a finished recording is larger than chat limits; clicking
     the notification opens it in OmaConvert."""
     target = Path(path)
-    if not target.is_file():
+    try:
+        info = target.stat()
+    except (OSError, ValueError):
         return {"offered": False, "reason": "missing"}
-    size = target.stat().st_size
+    # The name comes from Omarchy's marker file: only the user's own
+    # recordings are offered, never a file someone else named there.
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+        return {"offered": False, "reason": "not-yours"}
+    size = info.st_size
     if size <= OFFER_ABOVE_BYTES or not shutil.which("omarchy-notification-send"):
         return {"offered": False, "bytes": size}
     _run(["omarchy-notification-send", "-g", "󰕧", "-t", "15000",

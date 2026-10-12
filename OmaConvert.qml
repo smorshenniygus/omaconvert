@@ -126,15 +126,6 @@ Item {
         root.pasteNote = ""
         service.paste()
     }
-    // Omarchy writes the recording's file name here while it records and
-    // removes it once the video is finalized: the file going away is the end.
-    property string activeRecording: ""
-    function recordingEnded() {
-        if (!root.activeRecording) return
-        var file = root.activeRecording
-        root.activeRecording = ""
-        if (root.session.prefs.offerRecordings) Quickshell.execDetached(["python3", service.executable, "--offer-recording", file])
-    }
     function convertAnother() {
         root.session.clear()
         root.clipboardStatus = ""
@@ -210,20 +201,11 @@ Item {
                 : "Nothing to paste: copy an image, a screenshot or a file first."
         }
     }
-    FileView {
-        id: recordingMarker
-        // Overridable so tests never touch the real marker.
-        path: Quickshell.env("OMACONVERT_RECORDING_MARKER") || "/tmp/omarchy-screenrecord-filename"
-        watchChanges: false
-        printErrors: false
-        onLoaded: { var name = text().trim(); if (name) root.activeRecording = name }
-        onLoadFailed: root.recordingEnded()
-    }
-    Timer {
-        interval: 2000
-        repeat: true
-        running: true
-        onTriggered: recordingMarker.reload()
+    // A finished Omarchy screen recording over 10 MB gets a notification
+    // that opens it here (the backend checks the file and its size).
+    RecordingWatch {
+        watching: root.session.prefs.offerRecordings
+        onEnded: file => Quickshell.execDetached(["python3", service.executable, "--offer-recording", file])
     }
     PreviewService {
         id: preview

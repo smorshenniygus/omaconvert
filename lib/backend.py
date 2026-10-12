@@ -423,7 +423,8 @@ def convert(runner, input_path, fmt, output_path, requested_bytes, preset, prefe
     if sequence:
         _check_sequence_request(fmt, output_path, requested_bytes, sequence_fps)
     folder = _output_directory(output_dir) if output_dir else None
-    input_path = Path(input_path).expanduser()
+    # Absolute, so a name starting with "-" never reads as an FFmpeg option.
+    input_path = Path(input_path).expanduser().absolute()
     if not input_path.is_file():
         raise OmaConvertError("The input file does not exist or is not a regular file.", str(input_path))
     spec = _format_spec(fmt)
@@ -457,7 +458,7 @@ def probe_all(runner, inputs):
     """Describe every input before a batch: one probe-item event each, with
     ok=False and a message for files that cannot be read."""
     for index, raw in enumerate(inputs):
-        path = Path(raw).expanduser()
+        path = Path(raw).expanduser().absolute()
         try:
             if not path.is_file():
                 raise OmaConvertError("The file does not exist or is not a regular file.", str(path))

@@ -66,7 +66,7 @@ The tool aims at 97% of the limit. MP4 and WebM use two-pass encoding with a cor
 - Results are never readable by more people than their source: converting a private (0600) file gives a private file.
 - Only after you switch on Open With: `~/.local/share/applications/io.github.smorshenniygus.omaconvert.desktop`. Switching it off removes the file.
 - Only after you switch on the hotkey: a block between `-- >>> OmaConvert hotkey` and `-- <<< OmaConvert hotkey` in `~/.config/hypr/bindings.lua`.
-- Pasted images: `~/Pictures/OmaConvert/pasted-<date>.png`. To spot the end of a screen recording it reads Omarchy's `/tmp/omarchy-screenrecord-filename` every two seconds; it never touches the recording.
+- Pasted images: `~/Pictures/OmaConvert/pasted-<date>.png`. To spot the end of a screen recording it checks Omarchy's marker every two seconds (`$XDG_RUNTIME_DIR/omarchy-screenrecord-filename`, or `/tmp/omarchy-screenrecord-filename` on Omarchy 4.0.4 and older) with `find` and `head` in separate processes: only your own regular file of at most 4 KiB is read, and only while the offer is switched on. It never touches the recording itself.
 
 No root access or package installation is needed.
 

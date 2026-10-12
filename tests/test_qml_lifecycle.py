@@ -66,6 +66,26 @@ class QmlLifecycle(unittest.TestCase):
             self.assertIn('PASS session keeps recipes, line and fields in sync', output, output[-2000:])
             self.assertNotIn('FAIL', output)
 
+    def test_recording_watch(self):
+        with tempfile.TemporaryDirectory(prefix='omaconvert-qml-') as directory:
+            folder = Path(directory)
+            shutil.copytree(ROOT / 'services', folder / 'services')
+            harness = (ROOT / 'tests/qml/RecordingHarness.qml').read_text().replace('../../services', 'services')
+            (folder / 'shell.qml').write_text(harness)
+            markers = folder / 'markers'
+            markers.mkdir()
+            runtime = folder / 'runtime'
+            runtime.mkdir(mode=0o700)
+            environment = dict(os.environ, QT_QPA_PLATFORM='offscreen', QT_QPA_PLATFORMTHEME='',
+                               XDG_RUNTIME_DIR=str(runtime), QT_QUICK_CONTROLS_STYLE='Basic',
+                               MARKER_DIR=str(markers))
+            environment.pop('WAYLAND_DISPLAY', None)
+            completed = subprocess.run(['qs', '-p', str(folder), '--no-color'], env=environment,
+                                       text=True, capture_output=True, timeout=20)
+            output = completed.stdout + completed.stderr
+            self.assertIn('PASS recording watch reads only a small own marker', output, output[-2000:])
+            self.assertNotIn('FAIL', output)
+
     def test_last_line_without_newline(self):
         with tempfile.TemporaryDirectory(prefix='omaconvert-qml-') as directory:
             folder = Path(directory)

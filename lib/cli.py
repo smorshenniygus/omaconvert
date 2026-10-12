@@ -171,7 +171,7 @@ def main(argv=None):
             probe_all(runner, args.input)
             return 0
         if args.probe:
-            path = Path(args.probe).expanduser()
+            path = Path(args.probe).expanduser().absolute()
             if not path.is_file():
                 raise OmaConvertError("The input file does not exist or is not a regular file.", str(path))
             info = probe_media(path, runner)

@@ -8,6 +8,7 @@ Images are scaled directly; videos seek to a representative frame
 from contextlib import contextmanager
 import json
 import os
+import stat
 from pathlib import Path
 import tempfile
 
@@ -94,10 +95,18 @@ def _private_umask():
 
 
 def _private_folder(folder):
-    """Create `folder` owner-only. The window's own cache folders are also
-    tightened when an older version left them 0755."""
+    """Create `folder` owner-only. A folder that is a link or belongs to
+    someone else is refused: the window loads the thumbnail written there.
+    The window's own cache folders are also tightened when an older version
+    left them 0755."""
     with _private_umask():
         folder.mkdir(parents=True, exist_ok=True)
+    try:
+        info = os.lstat(folder)
+    except OSError as exc:
+        raise OmaConvertError("Could not create the preview folder.", str(exc)) from exc
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        raise OmaConvertError("The preview folder is not a private folder of yours.", str(folder))
     own = cache_dir()
     if os.path.abspath(folder) == os.path.abspath(own):
         for path in (own, own.parent):
@@ -145,7 +154,7 @@ def generate_preview(runner, input_path, output_path, max_edge=DEFAULT_EDGE,
     takes the keyframe at or before `position` instead of decoding up to the
     exact frame: for scrubbing, where the exact frame follows on release."""
     max_edge = clamp_edge(max_edge)
-    source = Path(input_path).expanduser()
+    source = Path(input_path).expanduser().absolute()
     if not source.is_file():
         raise OmaConvertError(
             "The input file does not exist or is not a regular file.", str(source))
