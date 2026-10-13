@@ -67,6 +67,7 @@ The tool aims at 97% of the limit. MP4 and WebM use two-pass encoding with a cor
 - Only after you switch on Open With: `~/.local/share/applications/io.github.smorshenniygus.omaconvert.desktop`. Switching it off removes the file.
 - Only after you switch on the hotkey: a block between `-- >>> OmaConvert hotkey` and `-- <<< OmaConvert hotkey` in `~/.config/hypr/bindings.lua`.
 - Pasted images: `~/Pictures/OmaConvert/pasted-<date>.png`. To spot the end of a screen recording it checks Omarchy's marker every two seconds (`$XDG_RUNTIME_DIR/omarchy-screenrecord-filename`, or `/tmp/omarchy-screenrecord-filename` on Omarchy 4.0.4 and older) with `find` and `head` in separate processes: only your own regular file of at most 4 KiB is read, and only while the offer is switched on. It never touches the recording itself.
+- What it opens: a chosen, pasted or opened-with file is read by FFmpeg as soon as it is chosen, so FFmpeg may open it only as a media container (MP4/MOV, Matroska/WebM, AVI, MPEG-TS/PS, WMV, FLV, Ogg, GIF, APNG and still images) and only from the local file. Scripts and playlists (AviSynth, VapourSynth, concat, HLS, DASH, SDP) are refused without being read.
 
 No root access or package installation is needed.
 

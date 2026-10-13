@@ -3,7 +3,8 @@ import json
 import math
 from pathlib import Path
 
-from .errors import OmaConvertError
+from .errors import OmaConvertError, ProcessFailed
+from .inputs import REFUSED, input_args
 from .process import PROBE_TIMEOUT
 
 
@@ -115,11 +116,17 @@ def parse_probe_json(raw, path):
 
 
 def probe_media(path, runner):
-    args = [
-        "ffprobe", "-v", "error", "-show_streams", "-show_format",
-        "-of", "json", str(path),
-    ]
-    stdout = runner.capture(args, "Could not read the input media.", timeout=PROBE_TIMEOUT)
+    args = ["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", *input_args(path)]
+    try:
+        stdout = runner.capture(args, "Could not read the input media.", timeout=PROBE_TIMEOUT)
+    except ProcessFailed as exc:
+        if REFUSED in (exc.details or ""):
+            raise OmaConvertError(
+                "This file is not a video or image that OmaConvert opens.",
+                "Only media containers are read; scripts and playlists (AviSynth, VapourSynth, "
+                "concat, HLS, DASH, SDP) are never opened.",
+            ) from exc
+        raise
     try:
         return parse_probe_json(json.loads(stdout), path)
     except (json.JSONDecodeError, TypeError, ValueError) as exc:

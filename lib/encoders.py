@@ -6,6 +6,7 @@ import shutil
 
 from .color import chain, sdr_filter
 from .errors import OmaConvertError
+from .inputs import input_args
 from .optimizer import size_text
 from .tuning import (
     MIN_BITS_PER_PIXEL, MIN_VIDEO_BITRATE, SIZE_HEADROOM, TARGET_AUDIO_RATE, VIDEO_RATE_SHARE,
@@ -39,13 +40,13 @@ def _base_ffmpeg():
 def _input_args(input_path, seek=0.0, clip=None, input_seek=True):
     """Input seeking for a trimmed clip. Plain -i when untouched."""
     if not input_seek or ((seek or 0) <= 0 and clip is None):
-        return ["-i", str(input_path)]
+        return input_args(input_path)
     args = []
     if (seek or 0) > 0:
         args += ["-ss", f"{seek:.6f}"]
     if clip is not None:
         args += ["-t", f"{clip:.6f}"]
-    return args + ["-i", str(input_path)]
+    return args + input_args(input_path)
 
 
 def can_seek_input(info):
@@ -120,7 +121,7 @@ def encode_gif(runner, input_path, output, profile, duration, workdir, samples=N
         palette_index = len(samples)
         graph += f";{base}[{palette_index}:v]paletteuse=dither={profile.dither}:diff_mode=rectangle[out]"
         sample_duration = sum(length for _, length in samples)
-        encode_args = _base_ffmpeg() + _sample_inputs(input_path, samples, seek, clip, input_seek) + ["-i", str(palette),
+        encode_args = _base_ffmpeg() + _sample_inputs(input_path, samples, seek, clip, input_seek) + [*input_args(palette),
             "-filter_complex", graph, "-map", "[out]", "-loop", "0",
             "-progress", "pipe:1", str(output)]
         measured_duration = sample_duration
@@ -131,7 +132,7 @@ def encode_gif(runner, input_path, output, profile, duration, workdir, samples=N
             "-frames:v", "1", str(palette)]
         runner.capture(palette_args, "FFmpeg could not generate a GIF palette.")
         graph = f"[0:{stream_index}]{vf}[video];[video][1:v]paletteuse=dither={profile.dither}:diff_mode=rectangle[out]"
-        encode_args = _base_ffmpeg() + _input_args(input_path, seek, clip, input_seek) + ["-i", str(palette),
+        encode_args = _base_ffmpeg() + _input_args(input_path, seek, clip, input_seek) + [*input_args(palette),
             "-filter_complex", graph, "-map", "[out]", "-loop", "0",
             "-progress", "pipe:1", str(output)]
         measured_duration = duration

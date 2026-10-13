@@ -14,6 +14,7 @@ import tempfile
 
 from .color import chain, sdr_filter
 from .errors import OmaConvertError
+from .inputs import input_args
 from .probe import MediaInfo, probe_media
 from .process import PROBE_TIMEOUT
 
@@ -178,7 +179,7 @@ def generate_preview(runner, input_path, output_path, max_edge=DEFAULT_EDGE,
             args += ["-skip_frame", "nokey", "-noaccurate_seek"]
         if seek:
             args += ["-ss", f"{seek:.3f}"]
-        args += ["-i", str(source), "-map", f"0:{info.stream_index}",
+        args += [*input_args(source), "-map", f"0:{info.stream_index}",
                  "-vf", chain(_scale_filter(max_edge, info), sdr_filter(info)),
                  "-frames:v", "1", "-c:v", "png", "-f", "image2", "-update", "1", str(temp)]
         with _private_umask():
