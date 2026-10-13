@@ -1,9 +1,10 @@
-import ctypes
 import functools
 import os
+from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 
@@ -55,27 +56,30 @@ def confined(args, memory):
     return list(args)
 
 
-_PR_SET_PDEATHSIG = 1
-try:
-    _prctl = ctypes.CDLL(None, use_errno=True).prctl
-    _prctl.argtypes = (ctypes.c_int,) + (ctypes.c_ulong,) * 4
-except (OSError, AttributeError):
-    _prctl = None
+# Media tools start through bin/omaconvert-exec, which makes Linux SIGKILL
+# them when the backend dies and then execs the tool.
+#
+# The window kills the backend outright when the shell reloads. Tools run in
+# their own session (for killpg) and FFmpeg ignores SIGPIPE, so they would
+# otherwise keep encoding for minutes into a folder nobody cleans.
+#
+# Linux ties the signal to the thread that started the helper, not to the
+# process: that thread must stay alive until the tool exits. Every launch
+# goes through _run, where the starting thread (the main thread, or a batch
+# worker) also waits for the tool, so the rule holds. Do not start a tool
+# from a short-lived thread and wait for it elsewhere.
+_HELPER = Path(__file__).resolve().parents[1] / "bin" / "omaconvert-exec"
+_HELPER_NOT_STARTED = 127  # the helper's exit status when it could not exec the tool
 
 
-def _die_with_parent(parent):
-    """Runs in the child before exec: SIGKILL it when the backend dies.
+def _through_helper(args):
+    """`args` wrapped to run so that the tool dies with this process.
 
-    The window kills the backend outright when the shell reloads. Tools run
-    in their own session (for killpg) and FFmpeg ignores SIGPIPE, so they
-    would otherwise keep encoding for minutes into a folder nobody cleans.
-    The signal follows the thread that started the tool: the main thread,
-    or a batch worker that waits for its tool before it can exit."""
-    if _prctl is None:
-        return
-    _prctl(_PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
-    if os.getppid() != parent:  # the backend died before prctl took effect
-        os.kill(os.getpid(), signal.SIGKILL)
+    -I -S -B: start fast and import nothing from the user's site or the
+    current directory; the helper is standalone."""
+    if not sys.platform.startswith("linux"):
+        return list(args)
+    return [sys.executable, "-I", "-S", "-B", str(_HELPER), str(os.getpid()), *args]
 
 
 def dependencies():
@@ -185,14 +189,13 @@ class ProcessRunner:
         self.check_cancelled()
         try:
             process = subprocess.Popen(
-                confined(args, memory),
+                _through_helper(confined(args, memory)),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 errors="replace",
                 start_new_session=True,
-                preexec_fn=functools.partial(_die_with_parent, os.getpid()),
             )
         except OSError as exc:
             raise ProcessFailed("Could not start a required media tool.", str(exc)) from exc
@@ -242,6 +245,8 @@ class ProcessRunner:
                 "and was stopped.", (stderr or "").strip()[-8000:] or "Stopped at the memory limit.")
         if process.returncode:
             details = (stderr or "").strip()[-8000:]
+            if process.returncode == _HELPER_NOT_STARTED and "omaconvert-exec: cannot start" in details:
+                raise ProcessFailed("Could not start a required media tool.", details)
             lowered = details.lower()
             if "no space left on device" in lowered:
                 message = "Conversion failed because the destination disk is full."
