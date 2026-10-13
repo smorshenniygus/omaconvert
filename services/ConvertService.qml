@@ -80,7 +80,21 @@ Item {
     // Everything the window needs when it opens, in one backend call:
     // version, dependencies, capabilities, the Open With entry and the hotkey.
     function loadStatus() { statusCall.run(["--status"]) }
+    // Why the window could not ask the backend for its status or capabilities
+    // (cleared when a later call succeeds). It is also shown as `error`,
+    // unless a job is running or has an error of its own to show.
+    property string statusError: ""
+    function statusFailed(outcome) {
+        statusError = outcome.message
+        if (!busy && error === "") { error = outcome.message; details = outcome.details }
+    }
+    function clearStatusError() {
+        if (statusError === "") return
+        if (error === statusError) { error = ""; details = "" }
+        statusError = ""
+    }
     function applyStatus(event) {
+        clearStatusError()
         var deps = event.dependencies || {}
         dependenciesReady = deps.ok !== false
         if (event.version) backendVersion = String(event.version)
@@ -100,6 +114,7 @@ Item {
             else hotkey = event.hotkey
         }
     }
+    // `--status` already carries the capabilities; this asks for them alone.
     function loadCapabilities() {
         if (capabilities === null) capabilitiesCall.run(["--capabilities"])
     }
@@ -366,6 +381,8 @@ Item {
     }
     // Ctrl+V: {kind: "file"|"text"|"none", path, text} arrives through pasted().
     signal pasted(var result)
+    // The clipboard could not be read at all: one line to show.
+    signal pasteFailed(string message)
     function paste() { pasteCall.run(["--paste"]) }
 
     // Like capabilities: independent of the job queue.
@@ -377,39 +394,56 @@ Item {
         openWithCall.run(["--open-with", action])
     }
 
+    // Independent utility calls. Each says which event answers it; a call
+    // that fails any other way (cannot start, bad output, nonzero exit, an
+    // `error` event) reports through onFailed, so no control is left
+    // without an explanation.
     CliCall {
         id: hotkeyCall
         executable: root.executable
-        onEvent: event => {
-            if (event.event === "hotkey") root.hotkey = event
-            else if (event.event === "error") root.hotkeyError = event.details || event.message
-        }
+        expect: "hotkey"
+        onEvent: event => { if (event.event === "hotkey") root.hotkey = event }
+        onFailed: outcome => root.hotkeyError = outcome.summary
     }
     CliCall {
         id: pasteCall
         executable: root.executable
+        expect: "paste"
         onEvent: event => { if (event.event === "paste") root.pasted(event) }
+        onFailed: outcome => {
+            if (!root.busy) root.details = outcome.details
+            root.pasteFailed(outcome.summary)
+        }
     }
     CliCall {
         id: openWithCall
         executable: root.executable
+        expect: "open-with"
         onEvent: event => {
-            if (event.event === "open-with") {
-                root.openWith = event
-                // Refresh our own entry written by an older version.
-                if (event.enabled && event.current === false) Qt.callLater(() => root.setOpenWith(true))
-            } else if (event.event === "error") root.openWithError = event.details || event.message
+            if (event.event !== "open-with") return
+            root.openWith = event
+            // Refresh our own entry written by an older version.
+            if (event.enabled && event.current === false) Qt.callLater(() => root.setOpenWith(true))
         }
+        onFailed: outcome => root.openWithError = outcome.summary
     }
     CliCall {
         id: statusCall
         executable: root.executable
+        expect: "status"
         onEvent: event => { if (event.event === "status") root.applyStatus(event) }
+        onFailed: outcome => root.statusFailed(outcome)
     }
     CliCall {
         id: capabilitiesCall
         executable: root.executable
-        onEvent: event => { if (event.event === "capabilities") root.capabilities = event }
+        expect: "capabilities"
+        onEvent: event => {
+            if (event.event !== "capabilities") return
+            root.clearStatusError()
+            root.capabilities = event
+        }
+        onFailed: outcome => root.statusFailed(outcome)
     }
 
     Component {

@@ -190,6 +190,7 @@ Item {
     }
     Connections {
         target: service
+        function onPasteFailed(message) { root.pasteNote = "Could not paste. " + message }
         function onPasted(result) {
             if (result.kind === "file") service.selectFiles(result.paths && result.paths.length ? result.paths : [result.path])
             else if (result.kind === "text" && root.session.idleWithFile) {
