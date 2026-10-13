@@ -12,8 +12,8 @@ import stat
 from pathlib import Path
 import tempfile
 
-from .color import chain, sdr_filter
-from .errors import OmaConvertError
+from .color import chain, is_hdr, sdr_filter
+from .errors import Cancelled, OmaConvertError
 from .inputs import input_args
 from .probe import MediaInfo, probe_media
 from .process import INSPECT_MEMORY, PROBE_TIMEOUT
@@ -147,6 +147,21 @@ def media_info_from_meta(raw):
         raise OmaConvertError("--preview-meta must be the probe event of this file as JSON.", str(exc)) from exc
 
 
+def _sdr_filter(runner, info):
+    """The tone mapping for an HDR file. Asking FFmpeg what it supports is
+    only worth it then; a preview without tone mapping beats no preview."""
+    if not is_hdr(info):
+        return ""
+    if runner.toolbox is None:
+        try:
+            runner.prepare_toolbox()
+        except Cancelled:
+            raise
+        except OmaConvertError:
+            pass
+    return sdr_filter(info, runner.toolbox)
+
+
 def generate_preview(runner, input_path, output_path, max_edge=DEFAULT_EDGE,
                      position=None, info=None, fast=False):
     """Extract one bounded PNG preview. Returns dict with path/width/height/bytes.
@@ -163,6 +178,7 @@ def generate_preview(runner, input_path, output_path, max_edge=DEFAULT_EDGE,
         info = probe_media(source, runner)
     seek = preview_position(info, position)
     fast = bool(fast and seek and info.kind != "image")
+    sdr = _sdr_filter(runner, info)  # before anything is created: this can be cancelled
     output = Path(output_path).expanduser()
     _private_folder(output.parent)
 
@@ -180,7 +196,7 @@ def generate_preview(runner, input_path, output_path, max_edge=DEFAULT_EDGE,
         if seek:
             args += ["-ss", f"{seek:.3f}"]
         args += [*input_args(source), "-map", f"0:{info.stream_index}",
-                 "-vf", chain(_scale_filter(max_edge, info), sdr_filter(info)),
+                 "-vf", chain(_scale_filter(max_edge, info), sdr),
                  "-frames:v", "1", "-c:v", "png", "-f", "image2", "-update", "1", str(temp)]
         with _private_umask():
             runner.capture(args, "Could not generate a preview image.", timeout=PROBE_TIMEOUT,

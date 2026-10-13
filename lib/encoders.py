@@ -201,7 +201,7 @@ def encode_image(runner, input_path, output, info, fmt, width, height, quality=8
         # A still has no audio timeline; align the selected frame with the
         # JPEG background at PTS zero instead of emitting background alone.
         trim = chain(trim, "setpts=PTS-STARTPTS")
-    sdr = sdr_filter(info)
+    sdr = sdr_filter(info, runner.toolbox)
     if fmt == "jpg":
         # JPEG has no alpha channel. Composite explicitly instead of relying on
         # an encoder-dependent implicit black background.
@@ -269,7 +269,7 @@ def decoded_frame(runner, input_path, info, workdir, seek=0.0):
     trim = _trim_filter(input_seek, seek)
     if trim:
         trim = chain(trim, "setpts=PTS-STARTPTS")
-    filters = chain(trim, sdr_filter(info))
+    filters = chain(trim, sdr_filter(info, runner.toolbox))
     runner.capture(_base_ffmpeg() + _input_args(input_path, seek, input_seek=input_seek)
                    + ["-map", f"0:{info.stream_index}"] + (["-vf", filters] if filters else [])
                    + ["-frames:v", "1", "-c:v", "rawvideo", "-f", "nut", str(path)],
@@ -396,7 +396,7 @@ def encode_video_quick(runner, input_path, output, info, fmt, preset, seek=0.0, 
     fps = min(info.fps, fps_cap)
     input_seek = can_seek_input(info)
     vf = chain(_trim_filter(input_seek, seek, clip), f"fps={fps:.6g}",
-               f"scale={width}:{height}:flags=lanczos", sdr_filter(info), "setsar=1")
+               f"scale={width}:{height}:flags=lanczos", sdr_filter(info, runner.toolbox), "setsar=1")
     common = _input_args(input_path, seek, clip, input_seek) + ["-vf", vf,
               "-map", f"0:{info.stream_index}", "-map", "0:a:0?", "-progress", "pipe:1"]
     if fmt in ("mp4", "mov", "mkv"):
@@ -431,7 +431,7 @@ def encode_video_target(runner, input_path, output, info, fmt, internal_target, 
     passlog = str(Path(output).with_name(f"passlog-{1 if reuse else attempt}"))
     input_seek = can_seek_input(info)
     vf = chain(_trim_filter(input_seek, seek, clip), f"fps={fps:.6g}",
-               f"scale={width}:{height}:flags=lanczos", sdr_filter(info), "setsar=1")
+               f"scale={width}:{height}:flags=lanczos", sdr_filter(info, runner.toolbox), "setsar=1")
     # Same codec arguments in both passes so the pass log matches.
     video_codec, audio_codec = _video_codec(fmt, [], TARGET_AUDIO_RATE,
                                             vp9_speed=_VP9_TARGET_SPEED)
@@ -464,7 +464,8 @@ def encode_png_sequence(runner, input_path, folder, info, fps=None, seek=0.0, cl
     filters = [_trim_filter(input_seek, seek, clip)]
     if fps:
         filters.append(f"fps={rate:.6g}")
-    filters += [f"scale={info.width}:{info.height}:flags=lanczos", sdr_filter(info), "setsar=1"]
+    filters += [f"scale={info.width}:{info.height}:flags=lanczos",
+                sdr_filter(info, runner.toolbox), "setsar=1"]
     progress_fields = {"pass": 1, "passes": 1, "width": info.width, "height": info.height, "fps": rate}
     runner.sink.emit("encoding", progress=0.0, **progress_fields)
     runner.ffmpeg(_base_ffmpeg() + _input_args(input_path, seek, clip, input_seek)

@@ -6,7 +6,6 @@ from dataclasses import replace
 from pathlib import Path
 import shutil
 import signal
-import subprocess
 
 from .color import sdr_filter
 from .encoders import (
@@ -62,7 +61,8 @@ def _analyze_gif(runner, input_path, info, profiles, internal_target, workdir, g
         path = Path(workdir) / f"sample-{index}.gif"
         size = encode_gif(runner, input_path, path, profiles[index], info.duration, workdir,
                           samples=samples, gifsicle=gifsicle, stream_index=info.stream_index,
-                          seek=seek, clip=clip, sdr=sdr_filter(info), input_seek=can_seek_input(info))
+                          seek=seek, clip=clip, sdr=sdr_filter(info, runner.toolbox),
+                          input_seek=can_seek_input(info))
         estimated = max(size, int(size * info.duration / sample_duration))
         cache[index] = estimated
         runner.sink.emit("candidate", width=profiles[index].width, height=profiles[index].height,
@@ -109,7 +109,8 @@ def _convert_gif(runner, input_path, info, output_temp, requested_bytes, prefere
         candidate_path.unlink(missing_ok=True)
         size = encode_gif(runner, input_path, candidate_path, profile, info.duration, workdir,
                           pass_number=len(attempt_indices), passes=3, gifsicle=gifsicle, stream_index=info.stream_index,
-                          seek=seek, clip=clip, sdr=sdr_filter(info), input_seek=can_seek_input(info))
+                          seek=seek, clip=clip, sdr=sdr_filter(info, runner.toolbox),
+                          input_seek=can_seek_input(info))
         if smallest is None or size < smallest[0]:
             smallest = (size, profile)
         if size <= requested_bytes:
@@ -133,7 +134,8 @@ def _convert_gif(runner, input_path, info, output_temp, requested_bytes, prefere
         candidate_path.unlink(missing_ok=True)
         size = encode_gif(runner, input_path, candidate_path, profile, info.duration, workdir,
                           pass_number=4, passes=4, gifsicle=gifsicle, stream_index=info.stream_index,
-                          seek=seek, clip=clip, sdr=sdr_filter(info), input_seek=can_seek_input(info))
+                          seek=seek, clip=clip, sdr=sdr_filter(info, runner.toolbox),
+                          input_seek=can_seek_input(info))
         if smallest is None or size < smallest[0]:
             smallest = (size, profile)
         if size <= requested_bytes:
@@ -289,19 +291,23 @@ def _format_spec(fmt):
     return spec
 
 
-def _check_tools(spec):
-    """Cheap (ffmpeg -encoders/-muxers/-filters, cached) and before the probe,
-    so a missing encoder never costs an analysis or encode. The full
-    requirement (animated GIF filters, audio encoder) is known only after
-    the probe; here only what every input of this format needs."""
-    try:
-        tools = formats.toolbox()
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise OmaConvertError("Could not ask FFmpeg which formats it supports.", str(exc)) from exc
+def _prepare(runner):
+    """FFmpeg's capabilities, asked now (through the runner, so cancelling
+    stops it) unless the job already did, as a batch does before its workers
+    start. Cheap (ffmpeg -encoders/-muxers/-filters, cached on disk)."""
+    if runner.toolbox is None:
+        runner.prepare_toolbox()
+    return runner.toolbox
+
+
+def _check_tools(spec, tools):
+    """Before the probe, so a missing encoder never costs an analysis or
+    encode. The full requirement (animated GIF filters, audio encoder) is
+    known only after the probe; here only what every input of this format
+    needs."""
     missing = formats.missing_for(spec, tools, still=True)
     if missing:
         raise OmaConvertError(formats.unavailable_message(spec, missing), ", ".join(missing))
-    return tools
 
 
 def _check_input(spec, tools, info, requested_bytes):
@@ -389,7 +395,8 @@ def _encode(runner, input_path, output, info, work, fmt, requested_bytes, preset
             profile = profiles[index]
             encode_gif(runner, input_path, output, profile, work.duration, directory,
                        gifsicle=gifsicle, stream_index=work.stream_index,
-                       seek=seek, clip=clip, sdr=sdr_filter(work), input_seek=can_seek_input(work))
+                       seek=seek, clip=clip, sdr=sdr_filter(work, runner.toolbox),
+                       input_seek=can_seek_input(work))
         return profile.colors
     if requested_bytes:
         _encode_video_target(runner, input_path, output, work, fmt, requested_bytes, seek, clip)
@@ -429,7 +436,8 @@ def convert(runner, input_path, fmt, output_path, requested_bytes, preset, prefe
         raise OmaConvertError("The input file does not exist or is not a regular file.", str(input_path))
     spec = _format_spec(fmt)
     fmt = spec.id
-    tools = _check_tools(spec)
+    tools = _prepare(runner)
+    _check_tools(spec, tools)
     info = probe_media(input_path, runner)
     runner.sink.emit("probe", **info.event_fields())
     _check_input(spec, tools, info, requested_bytes)
@@ -489,6 +497,7 @@ def convert_batch(runner, inputs, fmt, requested_bytes, preset, preference,
     output paths in input order."""
     total = len(inputs)
     jobs = jobs or batch_jobs(fmt, sequence)
+    _prepare(runner)  # once, before any worker starts
 
     def one(index, raw):
         runner.check_cancelled()

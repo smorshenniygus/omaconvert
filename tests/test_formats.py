@@ -15,6 +15,8 @@ import tempfile
 import unittest
 
 from lib import formats, launcher
+from lib.events import EventSink
+from lib.process import ProcessRunner
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "bin" / "omaconvert"
@@ -113,9 +115,7 @@ class ParseTests(unittest.TestCase):
 
     @unittest.skipUnless(HAVE_TOOLS, "ffmpeg and ffprobe are required")
     def test_installed_ffmpeg_tables(self):
-        formats.clear_cache()
-        self.addCleanup(formats.clear_cache)
-        tools = formats.toolbox()
+        tools = formats.toolbox(ProcessRunner(EventSink()))
         self.assertIn("mp4", tools.muxers)
         self.assertIn("png", tools.encoders)
         self.assertTrue({"palettegen", "paletteuse", "scale"} <= tools.filters)

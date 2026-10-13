@@ -105,7 +105,8 @@ _ADVANCING = frozenset({"frame", "out_time_us", "out_time_ms", "out_time", "tota
 
 class _Supervision:
     """What every runner of one backend shares: the running tools, so
-    cancelling stops all of them, and whether the job was cancelled."""
+    cancelling stops all of them, whether the job was cancelled, and FFmpeg's
+    capabilities once the job has asked for them."""
 
     def __init__(self):
         self.lock = threading.RLock()
@@ -114,6 +115,8 @@ class _Supervision:
         self.signal_number = None
         self.terminators = {}
         self.timed_out = set()
+        self.toolbox = None
+        self.toolbox_lock = threading.Lock()  # not `lock`: cancelling must not wait for a question
 
 
 class ProcessRunner:
@@ -136,6 +139,23 @@ class ProcessRunner:
         """A runner reporting to `sink` that is cancelled with this one:
         one per file of a batch converted in parallel."""
         return ProcessRunner(sink, self._shared)
+
+    @property
+    def toolbox(self):
+        """What the installed FFmpeg can do (formats.Toolbox): None until
+        `prepare_toolbox` has run, and without an FFmpeg."""
+        return self._shared.toolbox
+
+    def prepare_toolbox(self):
+        """Ask FFmpeg what it can do, once for the job: every runner made
+        from this one sees the answer. A job calls this before it starts
+        workers, which then only read the immutable Toolbox. Asking runs
+        through this runner, so cancelling the job stops it."""
+        with self._shared.toolbox_lock:
+            if self._shared.toolbox is None:
+                from . import formats
+                self._shared.toolbox = formats.toolbox(self)
+            return self._shared.toolbox
 
     def check_cancelled(self):
         if self.cancelled:

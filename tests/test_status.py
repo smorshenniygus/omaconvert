@@ -15,6 +15,8 @@ CLI = ROOT / "bin" / "omaconvert"
 sys.path.insert(0, str(ROOT))
 
 from lib import formats
+from lib.events import EventSink
+from lib.process import ProcessRunner
 
 
 class StatusTests(unittest.TestCase):
@@ -62,8 +64,7 @@ class ToolboxDiskCacheTests(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, {"XDG_CACHE_HOME": str(self.root / "cache")})
         patcher.start()
         self.addCleanup(patcher.stop)
-        formats.clear_cache()
-        self.addCleanup(formats.clear_cache)
+        self.runner = ProcessRunner(EventSink())
 
     def write_stub(self, encoder):
         self.stub.write_text(
@@ -76,17 +77,15 @@ class ToolboxDiskCacheTests(unittest.TestCase):
         self.stub.chmod(self.stub.stat().st_mode | stat.S_IXUSR)
 
     def test_second_process_reads_the_disk_and_a_changed_ffmpeg_is_asked_again(self):
-        first = formats.toolbox(str(self.stub))
+        first = formats.toolbox(self.runner, str(self.stub))
         self.assertIn("libx264", first.encoders)
         cache = self.root / "cache" / "omaconvert" / "toolbox.json"
         self.assertEqual(stat.S_IMODE(cache.stat().st_mode), 0o600)
-        formats.clear_cache()
         with mock.patch.object(formats, "_run", side_effect=AssertionError("asked FFmpeg again")):
-            self.assertEqual(formats.toolbox(str(self.stub)), first)
-        formats.clear_cache()
+            self.assertEqual(formats.toolbox(self.runner, str(self.stub)), first)
         self.write_stub("libvpx-vp9")
         os.utime(self.stub, ns=(1, 1))
-        self.assertIn("libvpx-vp9", formats.toolbox(str(self.stub)).encoders)
+        self.assertIn("libvpx-vp9", formats.toolbox(self.runner, str(self.stub)).encoders)
 
 
 if __name__ == "__main__":

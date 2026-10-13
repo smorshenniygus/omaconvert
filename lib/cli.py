@@ -1,6 +1,5 @@
 import argparse
 import signal
-import subprocess
 import sys
 from pathlib import Path
 
@@ -87,7 +86,7 @@ def build_parser():
     return parser
 
 
-def _status():
+def _status(runner):
     """Version, dependencies, format capabilities, the Open With entry and
     the hotkey in one event: one process when the window opens instead of
     four. A part that cannot be read is reported with an `error` field."""
@@ -101,9 +100,11 @@ def _status():
             "details": "Not found on PATH: " + ", ".join(missing)}
     else:
         try:
-            status["capabilities"] = formats.capabilities(formats.toolbox())
-        except (OSError, subprocess.SubprocessError) as exc:
-            status["capabilities_error"] = str(exc)
+            status["capabilities"] = formats.capabilities(formats.toolbox(runner))
+        except Cancelled:
+            raise
+        except OmaConvertError as exc:
+            status["capabilities_error"] = exc.details or exc.message
     for name, read in (("open_with", launcher.open_with_status), ("hotkey", desktop.hotkey_status)):
         try:
             status[name] = read()
@@ -123,7 +124,7 @@ def main(argv=None):
             sink.emit("version", version=__version__)
             return 0
         if args.status:
-            sink.emit("status", **_status())
+            sink.emit("status", **_status(runner))
             return 0
         if args.paste:
             from . import desktop
@@ -160,11 +161,7 @@ def main(argv=None):
         if args.check:
             return 0
         if args.capabilities:
-            try:
-                tools = formats.toolbox()
-            except (OSError, subprocess.SubprocessError) as exc:
-                raise OmaConvertError("Could not ask FFmpeg which formats it supports.", str(exc))
-            sink.emit("capabilities", **formats.capabilities(tools))
+            sink.emit("capabilities", **formats.capabilities(formats.toolbox(runner)))
             return 0
         if args.probe_all:
             from .backend import probe_all
