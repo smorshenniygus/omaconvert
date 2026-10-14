@@ -14,8 +14,9 @@ Item {
 
     // Never a shared folder such as /tmp: the backend refuses a preview
     // folder that is not the user's own.
+    readonly property string instanceId: "p" + Quickshell.processId + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2)
     readonly property string cacheBase: (Quickshell.env("XDG_CACHE_HOME")
-        || (Quickshell.env("HOME") + "/.cache")) + "/omaconvert/previews"
+        || (Quickshell.env("HOME") + "/.cache")) + "/omaconvert/previews/" + root.instanceId
     readonly property string sourcePath: cacheBase + "/src-preview.png"
     readonly property string resultPath: cacheBase + "/res-preview.png"
 

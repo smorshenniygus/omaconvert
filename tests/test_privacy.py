@@ -83,7 +83,7 @@ class PrivacyTests(unittest.TestCase):
         code, events = self.run_cli("--forget-preview", target)
         self.assertEqual(code, 0, events)
         self.assertEqual(events[-1], {"event": "forgotten", "path": str(target), "removed": True})
-        self.assertEqual(list(self.previews.iterdir()), [])
+        self.assertEqual([p.name for p in self.previews.iterdir()], [".res-preview.png.abc.tmp.png"])
         code, events = self.run_cli("--forget-preview", target)
         self.assertEqual((code, events[-1]["removed"]), (0, False))
 

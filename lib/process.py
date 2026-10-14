@@ -228,13 +228,13 @@ class ProcessRunner:
             self._terminate(process)
         return process
 
-    def _watch(self, process, limit, last_activity):
+    def _watch(self, process, limit, last_activity, drained):
         """Stop `process` once `last_activity()` is older than `limit` seconds."""
         if not limit:
             return None
 
         def watchdog():
-            while process.poll() is None:
+            while not drained.is_set():
                 if time.monotonic() - last_activity() > limit:
                     with self._lock:
                         self._timed_out.add(process)
@@ -284,7 +284,8 @@ class ProcessRunner:
         thread = threading.Thread(target=_drain_tail, args=(process.stderr, stderr_tail), daemon=True)
         thread.start()
         activity = [time.monotonic()]
-        self._watch(process, limit, lambda: activity[0])
+        drained = threading.Event()
+        self._watch(process, limit, lambda: activity[0], drained)
         from .streams import read_bounded, iter_bounded_lines, OutputLimitExceeded
         stdout = None
         try:
@@ -305,9 +306,11 @@ class ProcessRunner:
                 self._timed_out.discard(process)
                 terminator = self._terminators.pop(process, None)
             if terminator: terminator.join(timeout=2)
+            drained.set()
             raise
         process.wait()
         thread.join()
+        drained.set()
         process.stdout.close()
         process.stderr.close()
         self._finish(process, stderr_tail.value, message, memory)

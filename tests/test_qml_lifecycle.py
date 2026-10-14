@@ -156,7 +156,9 @@ class PreviewCache(unittest.TestCase):
         output = completed.stdout + completed.stderr
         self.assertNotIn('FAIL', output)
         self.assertIn('READY', output)
-        return folder / 'cache' / 'omaconvert' / 'previews' / 'src-preview.png'
+        import re
+        match = re.search(r'READY ([^\n]+)', output)
+        return Path(match.group(1).strip())
 
     def test_preview_is_private_and_cleared(self):
         with tempfile.TemporaryDirectory(prefix='omaconvert-qml-') as directory:

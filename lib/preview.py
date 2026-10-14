@@ -8,6 +8,7 @@ Images are scaled directly; videos seek to a representative frame
 from contextlib import contextmanager
 import json
 import os
+import re
 import stat
 from pathlib import Path
 import tempfile
@@ -119,9 +120,7 @@ def _private_folder(folder):
 
 
 def forget_preview(path):
-    """Delete one of the window's cached thumbnails (and any half-written
-    temporary next to it). Other names are refused, so this never becomes
-    a general way to delete files."""
+    """Delete one owned slot; active/stale temporaries belong to the job registry."""
     target = Path(path).expanduser()
     if target.name not in PREVIEW_NAMES:
         raise OmaConvertError("Only OmaConvert preview files can be forgotten.", str(target))
@@ -129,9 +128,9 @@ def forget_preview(path):
     if target.is_symlink() or target.is_file():
         target.unlink()
         removed = True
-    if target.parent.is_dir():
-        for stale in target.parent.glob(f".{target.name}.*.tmp.png"):
-            stale.unlink(missing_ok=True)
+    if re.fullmatch(r"p[0-9]+-[a-z0-9-]+", target.parent.name):
+        try: target.parent.rmdir()
+        except OSError: pass
     return {"path": str(target), "removed": removed}
 
 
@@ -169,6 +168,7 @@ def generate_preview(runner, input_path, output_path, max_edge=DEFAULT_EDGE,
     `info` is the probe of this file when the caller already has it. `fast`
     takes the keyframe at or before `position` instead of decoding up to the
     exact frame: for scrubbing, where the exact frame follows on release."""
+    sweep_preview_sessions()
     max_edge = clamp_edge(max_edge)
     source = Path(input_path).expanduser().absolute()
     if not source.is_file():
@@ -245,3 +245,27 @@ def validate_preview(path):
     if not (0 < width <= 320 and 0 < height <= 320):
         raise OmaConvertError("The generated preview exceeds its size limit.")
     return width, height
+
+
+def sweep_preview_sessions():
+    """Only generated slots of vanished UI processes, never live sessions."""
+    root = cache_dir()
+    try:
+        info = root.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid(): return
+        with os.scandir(root) as entries:
+            for entry in entries:
+                match = re.fullmatch(r"p([0-9]+)-[a-z0-9-]+", entry.name)
+                if not match or not entry.is_dir(follow_symlinks=False): continue
+                if Path("/proc", match.group(1)).exists(): continue
+                folder = Path(entry.path)
+                if folder.lstat().st_uid != os.getuid(): continue
+                for name in PREVIEW_NAMES:
+                    target = folder / name
+                    try:
+                        metadata = target.lstat()
+                        if stat.S_ISREG(metadata.st_mode) and metadata.st_uid == os.getuid(): target.unlink()
+                    except FileNotFoundError: pass
+                try: folder.rmdir()
+                except OSError: pass
+    except FileNotFoundError: pass

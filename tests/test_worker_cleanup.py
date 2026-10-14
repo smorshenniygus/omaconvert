@@ -12,3 +12,13 @@ class CleanupTests(unittest.TestCase):
             with patch('lib.cleanup.runtime_dir',lambda:root):
                 set_job(unit);register(target);cleanup_job(unit);set_job(None)
             self.assertFalse(target.exists());self.assertEqual(unrelated.read_bytes(),b'keep')
+    def test_old_preview_sessions_are_removed_without_touching_live_session(self):
+        from lib.preview import sweep_preview_sessions
+        import os
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            old=root/'p999999999999-stale';old.mkdir(mode=0o700);(old/'src-preview.png').write_bytes(b'old')
+            live=root/f'p{os.getpid()}-live';live.mkdir(mode=0o700);(live/'src-preview.png').write_bytes(b'live')
+            with patch('lib.preview.cache_dir',lambda:root):sweep_preview_sessions()
+            self.assertFalse(old.exists());self.assertTrue((live/'src-preview.png').exists())

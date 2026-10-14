@@ -54,3 +54,36 @@ class WorkerLifecycle(unittest.TestCase):
         p=subprocess.run([sys.executable,'-c',code,'--probe',str(self.source)],env=self.stub('time.sleep(30)'),capture_output=True,text=True,timeout=8)
         events=[json.loads(x) for x in p.stdout.splitlines()]
         self.assertEqual(events[-1].get('reason'),'timeout',events)
+    def test_mixed_probe_and_cleanup_flags_keep_worker_boundary(self):
+        marker=self.folder/'group'
+        probe_json=json.dumps({"streams":[{"codec_type":"video","width":1,"height":1}],"format":{"format_name":"png_pipe"}})
+        env=self.stub(f'open({str(marker)!r},"w").write(open("/proc/self/cgroup").read());print({probe_json!r})')
+        p=subprocess.run([sys.executable,str(ROOT/'bin/omaconvert'),'--probe',str(self.source),'--forget-preview',str(self.folder/'src-preview.png')],env=env,capture_output=True,text=True,timeout=10)
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertIn('/omaconvert.slice/omaconvert-job-',marker.read_text())
+    def test_second_conversion_queues_and_can_be_cancelled(self):
+        import selectors
+        env=self.stub('time.sleep(5)')
+        args=[sys.executable,str(ROOT/'bin/omaconvert'),str(self.source),'--format','mp4']
+        first=subprocess.Popen(args,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        second=None
+        try:
+            deadline=time.monotonic()+5
+            while not self.pidfile.exists() and time.monotonic()<deadline:time.sleep(.02)
+            self.assertTrue(self.pidfile.exists())
+            original=self.pidfile.read_text()
+            second=subprocess.Popen(args,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            with selectors.DefaultSelector() as sel:
+                sel.register(second.stdout,selectors.EVENT_READ)
+                self.assertTrue(sel.select(2),'second conversion did not report queue')
+                queued=json.loads(second.stdout.readline())
+            self.assertEqual(queued['event'],'queued')
+            self.assertEqual(self.pidfile.read_text(),original)
+            second.terminate();out,err=second.communicate(timeout=3)
+            self.assertEqual(json.loads(out.splitlines()[-1])['event'],'cancelled')
+            self.assertIsNone(first.poll())
+        finally:
+            for process in (second,first):
+                if process:
+                    if process.poll() is None:process.terminate()
+                    process.communicate(timeout=5)

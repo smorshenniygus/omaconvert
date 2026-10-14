@@ -113,6 +113,12 @@ def _status(runner):
     return status
 
 
+def operation_for(args):
+    return next((name for name in ("version", "status", "paste", "hotkey", "offer_recording",
+        "open_with", "check", "capabilities", "probe_all", "probe", "forget_preview", "preview")
+        if getattr(args, name)), "convert")
+
+
 def run_worker(argv=None):
     sink = EventSink()
     runner = ProcessRunner(sink)
@@ -120,17 +126,18 @@ def run_worker(argv=None):
         signal.signal(signum, lambda number, _frame, active=runner: active.cancel(number))
     try:
         args = build_parser().parse_args(argv)
-        if args.version:
+        operation = operation_for(args)
+        if operation == "version":
             sink.emit("version", version=__version__)
             return 0
-        if args.status:
+        if operation == "status":
             sink.emit("status", **_status(runner))
             return 0
-        if args.paste:
+        if operation == "paste":
             from . import desktop
             sink.emit("paste", **desktop.paste())
             return 0
-        if args.hotkey:
+        if operation == "hotkey":
             from . import desktop
             try:
                 state = desktop.hotkey_status() if args.hotkey == "status" else desktop.set_hotkey(args.hotkey == "on")
@@ -138,11 +145,11 @@ def run_worker(argv=None):
                 raise OmaConvertError("Could not change the hotkey.", str(exc))
             sink.emit("hotkey", **state)
             return 0
-        if args.offer_recording:
+        if operation == "offer_recording":
             from . import desktop
             sink.emit("recording-offer", **desktop.offer_recording(args.offer_recording))
             return 0
-        if args.open_with:
+        if operation == "open_with":
             from . import launcher
             try:
                 state = (launcher.open_with_status() if args.open_with == "status"
@@ -158,27 +165,27 @@ def run_worker(argv=None):
             # --check too: the window shows this error rather than a bare exit code.
             raise OmaConvertError("Required media tools are missing: " + ", ".join(missing) + ". Install FFmpeg.",
                                   "Not found on PATH: " + ", ".join(missing))
-        if args.check:
+        if operation == "check":
             return 0
-        if args.capabilities:
+        if operation == "capabilities":
             sink.emit("capabilities", **formats.capabilities(formats.toolbox(runner)))
             return 0
-        if args.probe_all:
+        if operation == "probe_all":
             from .backend import probe_all
             probe_all(runner, args.input)
             return 0
-        if args.probe:
+        if operation == "probe":
             path = Path(args.probe).expanduser().absolute()
             if not path.is_file():
                 raise OmaConvertError("The input file does not exist or is not a regular file.", str(path))
             info = probe_media(path, runner)
             sink.emit("probe", **info.event_fields())
             return 0
-        if args.forget_preview:
+        if operation == "forget_preview":
             for path in args.forget_preview:
                 sink.emit("forgotten", **forget_preview(path))
             return 0
-        if args.preview:
+        if operation == "preview":
             if not args.preview_output:
                 raise OmaConvertError("--preview-output is required with --preview.")
             info = media_info_from_meta(args.preview_meta) if args.preview_meta else None
@@ -238,13 +245,13 @@ def main(argv=None):
     except OmaConvertError as exc:
         EventSink().emit("error", message=exc.message, details=exc.details)
         return 2
-    utility = (args.version or args.check or args.paste or args.hotkey or args.offer_recording
-               or args.open_with or args.forget_preview)
-    if utility:
+    # Match run_worker's precedence exactly: combined flags cannot use a
+    # lower-priority utility to bypass an earlier media operation.
+    operation = operation_for(args)
+    if operation in {"version", "paste", "hotkey", "offer_recording", "open_with", "check", "forget_preview"}:
         return run_worker(argv)
     from .controller import run_controlled
-    profile = "inspect" if (args.status or args.capabilities or args.probe_all or args.probe or args.preview) else "convert"
-    return run_controlled(argv, profile, EventSink())
+    return run_controlled(argv, "convert" if operation == "convert" else "inspect", EventSink())
 
 
 if __name__ == "__main__":

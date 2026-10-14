@@ -31,3 +31,10 @@ class CgroupTests(unittest.TestCase):
             self.assertEqual(first.path.parent,second.path.parent)
             self.assertLessEqual(int((first.path.parent/'memory.max').read_text()),first.budget.total_bytes)
             self.assertNotEqual(first.path,second.path)
+    def test_oom_kills_the_entire_job(self):
+        with JobScope(memory=256*1024**2) as scope:
+            p=scope.start([sys.executable,'-c',
+                "import sys,subprocess,time;sys.stdin.readline();subprocess.Popen([sys.executable,'-c','x=bytearray(512*1024**2)']);time.sleep(1);print('survived')"],'inspect')
+            p.stdin.write(b'go\n');p.stdin.flush();p.wait(timeout=5)
+            self.assertNotEqual(p.returncode,0,'worker survived codec OOM')
+            self.assertNotIn(b'survived',p.stdout.read())

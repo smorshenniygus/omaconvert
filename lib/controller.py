@@ -74,6 +74,8 @@ def run_controlled(argv, profile, sink):
             while selector.get_map():
                 now = time.monotonic()
                 if cancelled[0]: raise Cancelled('Conversion cancelled.')
+                if scope.guard and scope.guard.poll() is not None:
+                    raise ProtectionUnavailable('Lifetime guard stopped unexpectedly.')
                 if process.poll() is not None:
                     exited_at = exited_at or now
                     if now - exited_at > 1:
@@ -82,6 +84,8 @@ def run_controlled(argv, profile, sink):
                     raise WorkerFailure('timeout', 'Reading the media took too long and was stopped.')
                 if now >= next_sample:
                     observed = scope.observations()
+                    if observed.get('oomKill') or observed.get('result') == 'oom-kill':
+                        raise WorkerFailure('memory-limit', 'The job exceeded its memory budget and was stopped.')
                     next_sample = now + .1
                 for key, _ in selector.select(.05):
                     chunk = os.read(key.fileobj.fileno(),4096)

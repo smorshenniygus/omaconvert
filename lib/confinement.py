@@ -9,10 +9,12 @@ import json
 import os
 from pathlib import Path
 import signal
+import selectors
 import shutil
 import stat
 import subprocess
 import time
+import sys
 import uuid
 
 from .errors import OmaConvertError
@@ -131,6 +133,7 @@ class JobScope:
         self.memory = min(memory or self.budget.inspect_bytes, self.budget.total_bytes) // os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PAGE_SIZE")
         self.unit = 'omaconvert-job-' + uuid.uuid4().hex + '.scope'
         self.process = None
+        self.guard = None
         self.path = None
         self.peak = 0
         self.oom_kill = 0
@@ -161,7 +164,7 @@ class JobScope:
                             'MemoryMax', 't', self.budget.total_bytes)
             command = [shutil.which('systemd-run', path=os.defpath) or 'systemd-run', '--user', '--scope', '--quiet', '--expand-environment=no',
                        '--unit=' + self.unit, '--slice=' + SLICE,
-                       '-p', f'MemoryMax={self.memory}', '-p', 'MemorySwapMax=0', '--', *argv]
+                       '-p', f'MemoryMax={self.memory}', '-p', 'MemorySwapMax=0', '-p', 'OOMPolicy=kill', '--', *argv]
             self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                             stderr=subprocess.PIPE, start_new_session=True)
             deadline = time.monotonic() + 5
@@ -173,6 +176,15 @@ class JobScope:
                 if group and (CGROUP / group.lstrip('/') / 'memory.max').exists():
                     self.path = CGROUP / group.lstrip('/')
                     self.verify(self.process.pid)
+                    helper = Path(__file__).resolve().parents[1] / 'bin' / 'omaconvert-guard'
+                    self.guard = subprocess.Popen([sys.executable, '-I', '-S', '-B', str(helper), str(os.getpid()), self.unit],
+                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                        start_new_session=True)
+                    with selectors.DefaultSelector() as ready:
+                        ready.register(self.guard.stdout, selectors.EVENT_READ)
+                        if not ready.select(5) or self.guard.stdout.readline(7) != b'ready\n':
+                            raise ProtectionUnavailable('Lifetime guard did not start.')
+                    self.guard.stdout.close()
                     return self.process
                 time.sleep(.02)
             raise ProtectionUnavailable('Worker cgroup did not start in time.')
@@ -190,6 +202,8 @@ class JobScope:
                 raise ValueError('Job memory limit differs.')
             if int((here.parent / 'memory.max').read_text()) > self.budget.total_bytes:
                 raise ValueError('Application memory limit exceeds budget.')
+            if (here / 'memory.oom.group').read_text().strip() != '1':
+                raise ValueError('Whole-job OOM policy was not applied.')
             for directory in (here, here.parent):
                 if (directory / 'memory.swap.max').read_text().strip() != '0':
                     raise ValueError('Swap was not disabled.')
@@ -238,6 +252,12 @@ class JobScope:
                 manager('ResetFailedUnit', 's', self.unit)
             except ProtectionUnavailable:
                 pass
+        if self.guard:
+            self.guard.stdin.close()
+            try: self.guard.wait(timeout=9)
+            except subprocess.TimeoutExpired:
+                self.guard.kill()
+                self.guard.wait()
         # Stop a transient slice only when it has no populated descendants.
         fd = os.open(runtime_dir() / 'slice.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         try:
