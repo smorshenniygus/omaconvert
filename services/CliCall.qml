@@ -72,7 +72,7 @@ Item {
             if (call.badLine === "") call.badLine = line.slice(0, 500)
             return
         }
-        call.seenEvents = call.seenEvents.concat([parsed.event])
+        call.seenEvents = call.seenEvents.concat([parsed.event]).slice(-32)
         if (call.expect !== "" && parsed.event === call.expect) call.answered = true
         if (parsed.event === "error" && call.errorEvent === null) call.errorEvent = parsed
         call.event(parsed)

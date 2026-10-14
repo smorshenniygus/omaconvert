@@ -81,16 +81,17 @@ Item {
         // queues its command: Quickshell starts it after the old process
         // exits, and the old one's output arrives after `generation` moved on.
         property int startedGeneration: -1
-        onStarted: job.startedGeneration = job.generation
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: slot.finished(text, job.startedGeneration)
+        property var previewEvent: null
+        onStarted: { job.startedGeneration = job.generation; job.previewEvent = null }
+        stdout: SplitParser {
+            onRead: line => {
+                var event = Model.eventFromLine(line)
+                if (event && event.event === "preview") job.previewEvent = event
+            }
         }
         // qmllint disable signal-handler-parameters
         onExited: (code) => {
-            // Stream finish carries the result; this only clears a hung spinner.
-            if (job.startedGeneration === slot.generation && slot.loading && code !== 0)
-                slot.loading = false
+            slot.finished(code === 0 && job.previewEvent ? JSON.stringify(job.previewEvent) : "", job.startedGeneration)
         }
         // qmllint enable signal-handler-parameters
     }

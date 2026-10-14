@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import stat
 import subprocess
 import time
@@ -82,7 +83,7 @@ def runtime_dir():
 
 
 def manager(method, signature, *args):
-    command = ['busctl', '--user', '--timeout=5', 'call', 'org.freedesktop.systemd1',
+    command = [shutil.which('busctl', path=os.defpath) or 'busctl', '--user', '--timeout=5', 'call', 'org.freedesktop.systemd1',
                '/org/freedesktop/systemd1', 'org.freedesktop.systemd1.Manager', method, signature,
                *map(str, args)]
     try:
@@ -96,7 +97,7 @@ def manager(method, signature, *args):
 
 def properties(unit):
     try:
-        result = subprocess.run(['systemctl', '--user', 'show', unit,
+        result = subprocess.run([shutil.which('systemctl', path=os.defpath) or 'systemctl', '--user', 'show', unit,
                                  '-p', 'ControlGroup', '-p', 'Result', '-p', 'ActiveState',
                                  '-p', 'MemoryMax', '-p', 'MemorySwapMax'],
                                 capture_output=True, text=True, timeout=5)
@@ -158,7 +159,7 @@ class JobScope:
                 if existing > self.budget.total_bytes:
                     manager('SetUnitProperties', 'sba(sv)', SLICE, 'true', 1,
                             'MemoryMax', 't', self.budget.total_bytes)
-            command = ['systemd-run', '--user', '--scope', '--quiet', '--expand-environment=no',
+            command = [shutil.which('systemd-run', path=os.defpath) or 'systemd-run', '--user', '--scope', '--quiet', '--expand-environment=no',
                        '--unit=' + self.unit, '--slice=' + SLICE,
                        '-p', f'MemoryMax={self.memory}', '-p', 'MemorySwapMax=0', '--', *argv]
             self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,

@@ -27,7 +27,7 @@ def encode_memory():
 @functools.cache
 def _scope_available():
     runtime = os.environ.get("XDG_RUNTIME_DIR", "")
-    return bool(shutil.which("systemd-run") and runtime and os.path.exists(os.path.join(runtime, "systemd", "private")))
+    return bool(shutil.which("systemd-run", path=os.defpath) and runtime and os.path.exists(os.path.join(runtime, "systemd", "private")))
 
 
 @functools.cache
@@ -35,7 +35,7 @@ def _scope_options():
     """systemd 254+ expands $VARIABLES in the command it runs; file names
     must reach the tool exactly as they are."""
     try:
-        first = subprocess.run(["systemd-run", "--version"], capture_output=True, text=True, timeout=5).stdout.split()
+        first = subprocess.run([shutil.which("systemd-run", path=os.defpath) or "systemd-run", "--version"], capture_output=True, text=True, timeout=5).stdout.split()
         version = int(first[1]) if len(first) > 1 and first[1].isdigit() else 0
     except (OSError, subprocess.SubprocessError, ValueError):
         version = 0
@@ -48,12 +48,16 @@ def confined(args, memory):
     groups and the parent-death signal still apply. Without a user manager,
     prlimit caps the address space instead: looser, since threads reserve
     address space they never use, hence the larger figure."""
+    from .confinement import cgroup_path, verify_worker
+    here = cgroup_path()
+    if here.name.startswith("omaconvert-job-") and here.parent.name == "omaconvert.slice":
+        verify_worker(here.name, int((here / "memory.max").read_text()))
+        return list(args)
     if _scope_available():
-        return ["systemd-run", "--user", "--scope", "--quiet", "--collect", *_scope_options(),
+        return [shutil.which("systemd-run", path=os.defpath) or "systemd-run", "--user", "--scope", "--quiet", "--collect", *_scope_options(),
                 "-p", f"MemoryMax={memory}", "-p", "MemorySwapMax=0", "--", *args]
-    if shutil.which("prlimit"):
-        return ["prlimit", f"--as={memory * 3}", "--", *args]
-    return list(args)
+    from .confinement import ProtectionUnavailable
+    raise ProtectionUnavailable("No user systemd manager is available.")
 
 
 # Media tools start through bin/omaconvert-exec, which makes Linux SIGKILL
@@ -213,8 +217,6 @@ class ProcessRunner:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
-                errors="replace",
                 start_new_session=True,
             )
         except OSError as exc:
@@ -258,11 +260,6 @@ class ProcessRunner:
             details = (stderr or "").strip()[-8000:]
             raise ProcessFailed(message + " The media tool stopped responding and was stopped.",
                                 details or "No output before the time limit.")
-        if process.returncode == -signal.SIGKILL:
-            # Nothing of ours sent it (no cancel, no timeout): the memory cap.
-            raise ProcessFailed(
-                message + f" It needed more than the {memory / 1024 ** 3:.0f} GiB of memory OmaConvert allows "
-                "and was stopped.", (stderr or "").strip()[-8000:] or "Stopped at the memory limit.")
         if process.returncode:
             details = (stderr or "").strip()[-8000:]
             if process.returncode == _HELPER_NOT_STARTED and "omaconvert-exec: cannot start" in details:
@@ -288,13 +285,27 @@ class ProcessRunner:
         thread.start()
         activity = [time.monotonic()]
         self._watch(process, limit, lambda: activity[0])
+        from .streams import read_bounded, iter_bounded_lines, OutputLimitExceeded
         stdout = None
-        if on_line is None:
-            stdout = process.stdout.read()
-        else:
-            for line in process.stdout:
-                if on_line(line.strip()):
-                    activity[0] = time.monotonic()
+        try:
+            if on_line is None:
+                stdout = read_bounded(process.stdout, 1024 * 1024).decode("utf-8", errors="replace")
+            else:
+                for raw in iter_bounded_lines(process.stdout, 16384):
+                    if on_line(raw.decode("utf-8", errors="replace").strip()):
+                        activity[0] = time.monotonic()
+        except OutputLimitExceeded:
+            self._terminate(process)
+            process.wait()
+            thread.join(timeout=2)
+            process.stdout.close()
+            process.stderr.close()
+            with self._lock:
+                self._shared.active.discard(process)
+                self._timed_out.discard(process)
+                terminator = self._terminators.pop(process, None)
+            if terminator: terminator.join(timeout=2)
+            raise
         process.wait()
         thread.join()
         process.stdout.close()
@@ -335,12 +346,16 @@ class _TailBuffer:
 
     def __init__(self, limit=8000):
         self.limit = limit
-        self.value = ""
+        self._value = b""
 
     def append(self, chunk):
-        self.value = (self.value + chunk)[-self.limit:]
+        self._value = (self._value + chunk.encode("utf-8"))[-self.limit:]
+
+    @property
+    def value(self):
+        return self._value.decode("utf-8", errors="replace")
 
 
 def _drain_tail(stream, tail):
-    for chunk in iter(lambda: stream.read(4096), ""):
-        tail.append(chunk)
+    for chunk in iter(lambda: stream.read(4096), b""):
+        tail.append(chunk.decode("utf-8", errors="replace"))

@@ -150,6 +150,8 @@ Item {
     }
     // Several paths open as a batch: every file is probed first; files of
     // another kind than the first readable one are skipped.
+    property var chunkedPaths: []
+
     function selectFiles(paths) {
         // A path given twice (drop plus paste) would share one row.
         var list = (paths || []).filter((p, i, all) => !!p && all.indexOf(p) === i)
@@ -296,7 +298,12 @@ Item {
             updateBatch(batchIndexOf(event.index), { status: "done", progress: 1, output: event.path, outputBytes: event.bytes })
         } else if (event.event === "item-error") {
             updateBatch(batchIndexOf(event.index), { status: "failed", message: event.message })
+        } else if (event.event === "batch-results") {
+            if (event.offset === 0) chunkedPaths = []
+            if (event.offset === chunkedPaths.length) chunkedPaths = chunkedPaths.concat(event.paths || [])
         } else if (event.event === "batch-complete") {
+            if (event.resultsChunked) event.paths = chunkedPaths
+            chunkedPaths = []
             job.terminalEvent = true
             terminalEvent = true
             batchCurrent = -1

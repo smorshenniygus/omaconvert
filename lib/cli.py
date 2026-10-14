@@ -113,7 +113,7 @@ def _status(runner):
     return status
 
 
-def main(argv=None):
+def run_worker(argv=None):
     sink = EventSink()
     runner = ProcessRunner(sink)
     for signum in (signal.SIGINT, signal.SIGTERM):
@@ -224,11 +224,27 @@ def main(argv=None):
         sink.emit("cancelled")
         return 130 if runner.signal_number == signal.SIGINT else 143
     except OmaConvertError as exc:
-        sink.emit("error", message=exc.message, details=exc.details)
+        sink.emit("error", message=exc.message, details=exc.details[:4096], reason=getattr(exc, "reason", "worker-failed"))
         return 2
     except Exception as exc:
         sink.emit("error", message="OmaConvert could not complete the conversion.", details=str(exc))
         return 2
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    try:
+        args = build_parser().parse_args(argv)
+    except OmaConvertError as exc:
+        EventSink().emit("error", message=exc.message, details=exc.details)
+        return 2
+    utility = (args.version or args.check or args.paste or args.hotkey or args.offer_recording
+               or args.open_with or args.forget_preview)
+    if utility:
+        return run_worker(argv)
+    from .controller import run_controlled
+    profile = "inspect" if (args.status or args.capabilities or args.probe_all or args.probe or args.preview) else "convert"
+    return run_controlled(argv, profile, EventSink())
 
 
 if __name__ == "__main__":

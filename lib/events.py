@@ -1,6 +1,7 @@
 import json
 import sys
 import threading
+from .streams import OutputLimitExceeded
 
 
 class EventSink:
@@ -10,7 +11,24 @@ class EventSink:
 
     def emit(self, event, **fields):
         payload = {"event": event, **fields}
-        line = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
+        line = json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")) + "\n"
+        if len(line.encode("utf-8")) > 65536:
+            if event == "batch-complete" and "paths" in fields:
+                paths = fields.pop("paths")
+                chunk = []
+                offset = 0
+                for path in paths:
+                    candidate = {"event": "batch-results", "offset": offset, "paths": chunk + [path]}
+                    if len((json.dumps(candidate, ensure_ascii=False) + "\n").encode()) > 65536:
+                        if not chunk: raise OutputLimitExceeded()
+                        self.emit("batch-results", offset=offset, paths=chunk)
+                        offset += len(chunk)
+                        chunk = []
+                    chunk.append(path)
+                if chunk: self.emit("batch-results", offset=offset, paths=chunk)
+                self.emit(event, resultsChunked=True, **fields)
+                return
+            raise OutputLimitExceeded()
         # Files of a parallel batch report from several threads: one whole
         # line at a time.
         with self._lock:

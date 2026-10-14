@@ -116,7 +116,7 @@ def parse_probe_json(raw, path):
 
 
 def probe_media(path, runner):
-    args = ["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", *input_args(path)]
+    args = ["ffprobe", "-v", "error", "-show_entries", "stream=index,codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,nb_read_frames,nb_frames,duration,sample_aspect_ratio,color_transfer:stream_disposition=attached_pic,still_image:stream_tags=rotate:stream_side_data=rotation:format=duration,size,format_name:format_tags=major_brand", "-of", "json", *input_args(path)]
     try:
         stdout = runner.capture(args, "Could not read the input media.", timeout=PROBE_TIMEOUT,
                                 memory=INSPECT_MEMORY)
