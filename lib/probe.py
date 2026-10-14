@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .errors import OmaConvertError, ProcessFailed
 from .inputs import REFUSED, input_args
-from .process import PROBE_TIMEOUT
+from .process import INSPECT_MEMORY, PROBE_TIMEOUT
 
 
 @dataclass(frozen=True)
@@ -118,7 +118,8 @@ def parse_probe_json(raw, path):
 def probe_media(path, runner):
     args = ["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", *input_args(path)]
     try:
-        stdout = runner.capture(args, "Could not read the input media.", timeout=PROBE_TIMEOUT)
+        stdout = runner.capture(args, "Could not read the input media.", timeout=PROBE_TIMEOUT,
+                                memory=INSPECT_MEMORY)
     except ProcessFailed as exc:
         if REFUSED in (exc.details or ""):
             raise OmaConvertError(

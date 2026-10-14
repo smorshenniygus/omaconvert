@@ -8,7 +8,51 @@ import threading
 import time
 
 from .errors import Cancelled, ProcessFailed
-from .tuning import DEFAULT_STALL_TIMEOUT, PROBE_TIMEOUT  # noqa: F401  (re-exported)
+from .tuning import (DEFAULT_STALL_TIMEOUT, ENCODE_MEMORY_MIN, ENCODE_MEMORY_SHARE,  # noqa: F401
+                     INSPECT_MEMORY, PROBE_TIMEOUT)
+
+
+@functools.cache
+def encode_memory():
+    """Memory cap of an encoder: a share of the machine's RAM."""
+    try:
+        with open("/proc/meminfo") as handle:
+            total = next(int(line.split()[1]) * 1024 for line in handle if line.startswith("MemTotal:"))
+    except (OSError, StopIteration, ValueError):
+        return ENCODE_MEMORY_MIN * 4
+    return max(ENCODE_MEMORY_MIN, int(total * ENCODE_MEMORY_SHARE))
+
+
+@functools.cache
+def _scope_available():
+    runtime = os.environ.get("XDG_RUNTIME_DIR", "")
+    return bool(shutil.which("systemd-run") and runtime and os.path.exists(os.path.join(runtime, "systemd", "private")))
+
+
+@functools.cache
+def _scope_options():
+    """systemd 254+ expands $VARIABLES in the command it runs; file names
+    must reach the tool exactly as they are."""
+    try:
+        first = subprocess.run(["systemd-run", "--version"], capture_output=True, text=True, timeout=5).stdout.split()
+        version = int(first[1]) if len(first) > 1 and first[1].isdigit() else 0
+    except (OSError, subprocess.SubprocessError, ValueError):
+        version = 0
+    return ["--expand-environment=no"] if version >= 254 else []
+
+
+def confined(args, memory):
+    """`args` with a memory cap of `memory` bytes. A user systemd scope caps
+    the memory actually used (swap off) and is the same process, so process
+    groups and the parent-death signal still apply. Without a user manager,
+    prlimit caps the address space instead: looser, since threads reserve
+    address space they never use, hence the larger figure."""
+    if _scope_available():
+        return ["systemd-run", "--user", "--scope", "--quiet", "--collect", *_scope_options(),
+                "-p", f"MemoryMax={memory}", "-p", "MemorySwapMax=0", "--", *args]
+    if shutil.which("prlimit"):
+        return ["prlimit", f"--as={memory * 3}", "--", *args]
+    return list(args)
 
 
 _PR_SET_PDEATHSIG = 1
@@ -137,11 +181,11 @@ class ProcessRunner:
         for process in processes:
             self._terminate(process)
 
-    def _start(self, args):
+    def _start(self, args, memory):
         self.check_cancelled()
         try:
             process = subprocess.Popen(
-                args,
+                confined(args, memory),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -177,7 +221,7 @@ class ProcessRunner:
         thread.start()
         return thread
 
-    def _finish(self, process, stderr, message):
+    def _finish(self, process, stderr, message, memory):
         with self._lock:
             self._shared.active.discard(process)
             terminator = self._terminators.pop(process, None)
@@ -191,6 +235,11 @@ class ProcessRunner:
             details = (stderr or "").strip()[-8000:]
             raise ProcessFailed(message + " The media tool stopped responding and was stopped.",
                                 details or "No output before the time limit.")
+        if process.returncode == -signal.SIGKILL:
+            # Nothing of ours sent it (no cancel, no timeout): the memory cap.
+            raise ProcessFailed(
+                message + f" It needed more than the {memory / 1024 ** 3:.0f} GiB of memory OmaConvert allows "
+                "and was stopped.", (stderr or "").strip()[-8000:] or "Stopped at the memory limit.")
         if process.returncode:
             details = (stderr or "").strip()[-8000:]
             lowered = details.lower()
@@ -200,14 +249,15 @@ class ProcessRunner:
                 message = "Conversion failed because the destination is not writable."
             raise ProcessFailed(message, details)
 
-    def _run(self, args, message, limit, on_line=None):
+    def _run(self, args, message, limit, on_line=None, memory=None):
         """Start `args`, keep a bounded stderr tail, stop the tool once nothing
         happened for `limit` seconds, and turn failures into errors.
 
         Without `on_line` stdout is collected and returned, and `limit`
         bounds the total wall time. With it every stdout line is passed on;
         a line for which it returns True counts as activity."""
-        process = self._start(args)
+        memory = memory or encode_memory()
+        process = self._start(args, memory)
         stderr_tail = _TailBuffer()
         thread = threading.Thread(target=_drain_tail, args=(process.stderr, stderr_tail), daemon=True)
         thread.start()
@@ -224,12 +274,13 @@ class ProcessRunner:
         thread.join()
         process.stdout.close()
         process.stderr.close()
-        self._finish(process, stderr_tail.value, message)
+        self._finish(process, stderr_tail.value, message, memory)
         return stdout
 
-    def capture(self, args, message, timeout=None):
-        """Run a tool to completion; `timeout` bounds its total wall time."""
-        return self._run(args, message, timeout)
+    def capture(self, args, message, timeout=None, memory=None):
+        """Run a tool to completion; `timeout` bounds its total wall time and
+        `memory` its RAM (bytes; an encoder's share of the machine by default)."""
+        return self._run(args, message, timeout, memory=memory)
 
     def ffmpeg(self, args, duration, stage="encoding", stall=None, **event_fields):
         """Run an FFmpeg encode with -progress; stop it if progress stalls."""

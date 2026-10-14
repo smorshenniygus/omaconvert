@@ -16,7 +16,7 @@ from .color import chain, sdr_filter
 from .errors import OmaConvertError
 from .inputs import input_args
 from .probe import MediaInfo, probe_media
-from .process import PROBE_TIMEOUT
+from .process import INSPECT_MEMORY, PROBE_TIMEOUT
 
 # The window's two cache files. --forget-preview deletes only these names.
 PREVIEW_NAMES = ("src-preview.png", "res-preview.png")
@@ -183,7 +183,8 @@ def generate_preview(runner, input_path, output_path, max_edge=DEFAULT_EDGE,
                  "-vf", chain(_scale_filter(max_edge, info), sdr_filter(info)),
                  "-frames:v", "1", "-c:v", "png", "-f", "image2", "-update", "1", str(temp)]
         with _private_umask():
-            runner.capture(args, "Could not generate a preview image.", timeout=PROBE_TIMEOUT)
+            runner.capture(args, "Could not generate a preview image.", timeout=PROBE_TIMEOUT,
+                           memory=INSPECT_MEMORY)
         runner.check_cancelled()
 
     try:

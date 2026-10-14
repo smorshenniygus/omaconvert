@@ -28,6 +28,18 @@ MIN_BITS_PER_PIXEL = 0.055
 # so video and GIF batches stay one file at a time.
 BATCH_IMAGE_JOBS = 3
 
+# --- Memory ---------------------------------------------------------------
+# Every media tool runs in a memory-capped systemd scope (swap off), so a
+# hostile or broken file costs at most this much RAM before the kernel stops
+# that one tool. Reading a file (the probe and the preview that run as soon
+# as it is chosen) needs little: a 48-megapixel PNG decodes in under 512 MiB,
+# a 4K HEVC frame in under 1 GiB.
+INSPECT_MEMORY = 2 * 1024 ** 3
+# Encoders legitimately need much more: x264 at 4K on 16 cores keeps about
+# 6 GiB of lookahead frames. They get this share of the machine's RAM.
+ENCODE_MEMORY_SHARE = 0.6
+ENCODE_MEMORY_MIN = 2 * 1024 ** 3
+
 # --- Process supervision -------------------------------------------------
 # Probing and previews are bounded single reads: minutes of silence mean the
 # tool hung (network mount, broken decoder), not a slow but healthy job.
