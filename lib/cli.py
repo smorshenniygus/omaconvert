@@ -86,7 +86,7 @@ def build_parser():
     return parser
 
 
-def _status(runner):
+def _status(runner, capabilities_error=None):
     """Version, dependencies, format capabilities, the Open With entry and
     the hotkey in one event: one process when the window opens instead of
     four. A part that cannot be read is reported with an `error` field."""
@@ -98,6 +98,8 @@ def _status(runner):
         status["error"] = {
             "message": "Required media tools are missing: " + ", ".join(missing) + ". Install FFmpeg.",
             "details": "Not found on PATH: " + ", ".join(missing)}
+    elif capabilities_error is not None:
+        status["capabilities_error"] = capabilities_error
     else:
         try:
             status["capabilities"] = formats.capabilities(formats.toolbox(runner))
@@ -251,6 +253,23 @@ def main(argv=None):
     if operation in {"version", "paste", "hotkey", "offer_recording", "open_with", "check", "forget_preview"}:
         return run_worker(argv)
     from .controller import run_controlled
+    if operation == "status":
+        class StatusSink(EventSink):
+            recovered = False
+
+            def emit(self, event, **fields):
+                if event == "error" and fields.get("reason") == "protection-unavailable":
+                    # Desktop settings need no media process. Never query the
+                    # toolbox outside the verified worker, even from its cache.
+                    status = _status(None, capabilities_error=fields.get("message"))
+                    super().emit("status", **status)
+                    self.recovered = True
+                else:
+                    super().emit(event, **fields)
+
+        sink = StatusSink()
+        code = run_controlled(argv, "inspect", sink)
+        return 0 if sink.recovered else code
     return run_controlled(argv, "convert" if operation == "convert" else "inspect", EventSink())
 
 

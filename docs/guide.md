@@ -61,14 +61,14 @@ The tool aims at 97% of the limit. MP4 and WebM use two-pass encoding with a cor
 - It runs only `ffmpeg`, `ffprobe`, and `gifsicle` if installed, all on your machine. Nothing is uploaded and there is no telemetry.
 - Converted files go next to the source, or into the folder chosen under **Save to**.
 - Preferences: `~/.config/omaconvert/preferences.ini`. It stores the last recipe and other settings, plus the output folder only if you ask it to remember it. File names are never saved.
-- Preview thumbnails: `~/.cache/omaconvert/previews`, at most two small PNGs, readable only by you (0600 in a 0700 folder). They are deleted when the preview is cleared or the window closes.
+- Preview thumbnails: `~/.cache/omaconvert/previews`, at most two small PNGs per running UI instance, readable only by you (0600 in a private session folder). They are deleted when the preview is cleared or the window closes; abandoned session previews are swept on a later preview request.
 - FFmpeg's list of encoders, formats and filters: `~/.cache/omaconvert/toolbox.json`, refreshed when the `ffmpeg` executable changes.
 - Results are never readable by more people than their source: converting a private (0600) file gives a private file.
 - Only after you switch on Open With: `~/.local/share/applications/io.github.smorshenniygus.omaconvert.desktop`. Switching it off removes the file.
 - Only after you switch on the hotkey: a block between `-- >>> OmaConvert hotkey` and `-- <<< OmaConvert hotkey` in `~/.config/hypr/bindings.lua`.
 - Pasted images: `~/Pictures/OmaConvert/pasted-<date>.png`. To spot the end of a screen recording it checks Omarchy's marker every two seconds (`$XDG_RUNTIME_DIR/omarchy-screenrecord-filename`, or `/tmp/omarchy-screenrecord-filename` on Omarchy 4.0.4 and older) with `find` and `head` in separate processes: only your own regular file of at most 4 KiB is read, and only while the offer is switched on. It never touches the recording itself.
 - What it opens: a chosen, pasted or opened-with file is read by FFmpeg as soon as it is chosen, so FFmpeg may open it only as a media container (MP4/MOV, Matroska/WebM, AVI, MPEG-TS/PS, WMV, FLV, Ogg, GIF, APNG and still images) and only from the local file. Scripts and playlists (AviSynth, VapourSynth, concat, HLS, DASH, SDP) are refused without being read.
-- Memory: every FFmpeg run is capped (a user systemd scope with swap off; prlimit where there is no user manager). Reading a chosen file for its details and preview may use 2 GiB, an encode 60 % of the machine's RAM; a file that needs more is stopped and reported, the rest of the desktop is untouched.
+- Memory: Python and its media tools share verified systemd/cgroup limits, with swap disabled. All jobs share a user-wide budget derived from RAM and ancestor limits; inspection uses at most 2 GiB. Media processing refuses to start if protection cannot be verified. See Media worker protection below.
 
 No root access or package installation is needed.
 
@@ -103,8 +103,10 @@ After a change to the installed plugin, run `omarchy plugin update io.github.smo
 
 ### Media worker protection
 
-Opening media requires a running user systemd manager, `systemd-run`, `systemctl`, `busctl`, and the cgroup v2 memory controller. OmaConvert verifies limits before decoding; it does not fall back to an unbounded process. Help, version and `--check` remain available without the manager.
+Opening media requires systemd 254 or newer, a running user systemd manager, `systemd-run`, `systemctl`, `busctl`, and the cgroup v2 memory controller. OmaConvert verifies limits before decoding; it does not fall back to an unbounded process. Help, version and `--check` remain available without the manager. `--status` still reports desktop settings and explains why media capabilities are unavailable.
 
 Python and its media tools share a per-job budget inside a transient application slice. The aggregate budget is 60% of effective memory capacity with at least 1 GiB reserved. Inspection uses at most 2 GiB, no swap, and a 120-second absolute deadline. Conversions queue across instances; images within a batch can still run in parallel under the shared limit. A memory-limit error does not overwrite an existing output or publish the current partial file.
+
+A separate, bounded lifetime guard stops the entire job if its controller dies. Job OOM policy kills the whole process group in its cgroup. Preview output is validated at no more than 320×320 pixels and 1 MiB before publication.
 
 The boundary limits resource consumption. It is not yet a filesystem/network sandbox. Resource tests, including a generated PNG metadata bomb, are opt-in: `bash scripts/check-security.sh`. They first prove cgroup enforcement and refuse to run the bomb otherwise. No hostile fixture is committed to the repository.

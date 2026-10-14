@@ -6,6 +6,19 @@ import unittest
 ROOT=Path(__file__).resolve().parents[1]
 
 class WorkerTests(unittest.TestCase):
+    def test_status_keeps_desktop_details_without_user_bus(self):
+        import os
+        env = dict(os.environ, DBUS_SESSION_BUS_ADDRESS='unix:path=/nonexistent')
+        p = subprocess.run([sys.executable, str(ROOT/'bin/omaconvert'), '--status'],
+                           env=env, capture_output=True, timeout=10)
+        self.assertEqual(p.returncode, 0, p.stdout)
+        status = json.loads(p.stdout)
+        self.assertEqual(status['event'], 'status')
+        self.assertIn('capabilities_error', status)
+        self.assertNotIn('capabilities', status)
+        self.assertIn('hotkey', status)
+        self.assertIn('open_with', status)
+
     def test_direct_worker_refuses_without_protection(self):
         worker=ROOT/'bin/omaconvert-worker'
         self.assertTrue(worker.exists(), 'worker entrypoint is missing')
