@@ -46,10 +46,14 @@ def work_directory(parent):
     lock = None
     try:
         lock = _hold_lock(directory)
+        from .cleanup import register
+        register(directory)
         yield directory
     finally:
         # Removed while still locked, so a sweep never races this cleanup.
         shutil.rmtree(directory, ignore_errors=True)
+        from .cleanup import forget
+        forget(directory)
         if lock is not None:
             os.close(lock)
 

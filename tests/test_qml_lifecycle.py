@@ -86,6 +86,36 @@ class QmlLifecycle(unittest.TestCase):
             self.assertIn('PASS recording watch reads only a small own marker', output, output[-2000:])
             self.assertNotIn('FAIL', output)
 
+    def run_with_stub_backends(self, harness_name, passed, timeout):
+        """A harness that talks to `cli_backend_<mode>.py` stand-ins, one per
+        way a backend can behave."""
+        modes = ('ok', 'slow', 'noisy', 'empty', 'other', 'malformed', 'exit', 'hugeerr', 'error', 'late',
+                 'crash')
+        with tempfile.TemporaryDirectory(prefix='omaconvert-qml-') as directory:
+            folder = Path(directory)
+            shutil.copytree(ROOT / 'services', folder / 'services')
+            shutil.copytree(ROOT / 'tests/qml/helpers', folder / 'helpers')
+            for mode in modes:
+                (folder / 'helpers' / f'cli_backend_{mode}.py').symlink_to('cli_backend.py')
+            harness = (ROOT / 'tests/qml' / harness_name).read_text().replace('../../services', 'services')
+            (folder / 'shell.qml').write_text(harness)
+            runtime = folder / 'runtime'
+            runtime.mkdir(mode=0o700)
+            environment = dict(os.environ, QT_QPA_PLATFORM='offscreen', QT_QPA_PLATFORMTHEME='',
+                               XDG_RUNTIME_DIR=str(runtime), QT_QUICK_CONTROLS_STYLE='Basic')
+            environment.pop('WAYLAND_DISPLAY', None)
+            completed = subprocess.run(['qs', '-p', str(folder), '--no-color'], env=environment,
+                                       text=True, capture_output=True, timeout=timeout)
+            output = completed.stdout + completed.stderr
+            self.assertIn(passed, output, output[-3000:])
+            self.assertNotIn('FAIL', output)
+
+    def test_cli_call_contract(self):
+        self.run_with_stub_backends('CliCallHarness.qml', 'PASS cli call contract', 40)
+
+    def test_utility_calls_explain_their_failures(self):
+        self.run_with_stub_backends('IntegrationHarness.qml', 'PASS utility calls explain their failures', 90)
+
     def test_last_line_without_newline(self):
         with tempfile.TemporaryDirectory(prefix='omaconvert-qml-') as directory:
             folder = Path(directory)
@@ -116,7 +146,7 @@ class PreviewCache(unittest.TestCase):
                             '-i', 'testsrc2=s=320x200', '-frames:v', '1', str(image)], check=True)
             image.chmod(0o600)
         environment = dict(os.environ, QT_QPA_PLATFORM='offscreen', QT_QPA_PLATFORMTHEME='',
-                           XDG_RUNTIME_DIR=str(folder / 'runtime'), XDG_CACHE_HOME=str(folder / 'cache'),
+                           XDG_RUNTIME_DIR=os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}'), XDG_CACHE_HOME=str(folder / 'cache'),
                            OMACONVERT_TEST_CLI=str(ROOT / 'bin' / 'omaconvert'),
                            OMACONVERT_TEST_INPUT=str(image), OMACONVERT_TEST_CLEAR='1' if clear else '0')
         environment.pop('WAYLAND_DISPLAY', None)
@@ -126,7 +156,9 @@ class PreviewCache(unittest.TestCase):
         output = completed.stdout + completed.stderr
         self.assertNotIn('FAIL', output)
         self.assertIn('READY', output)
-        return folder / 'cache' / 'omaconvert' / 'previews' / 'src-preview.png'
+        import re
+        match = re.search(r'READY ([^\n]+)', output)
+        return Path(match.group(1).strip())
 
     def test_preview_is_private_and_cleared(self):
         with tempfile.TemporaryDirectory(prefix='omaconvert-qml-') as directory:

@@ -24,7 +24,7 @@ class MemoryCapTests(unittest.TestCase):
     def test_every_launch_is_confined(self):
         args = confined(["ffprobe", "-version"], INSPECT_MEMORY)
         self.assertEqual(args[-2:], ["ffprobe", "-version"])
-        self.assertTrue(args[0] in ("systemd-run", "prlimit"), args)
+        self.assertTrue(os.path.basename(args[0]) == "systemd-run", args)
         self.assertGreaterEqual(encode_memory(), 2 * 1024 ** 3)
 
     def test_arguments_reach_the_tool_unchanged(self):
@@ -33,11 +33,11 @@ class MemoryCapTests(unittest.TestCase):
         self.assertEqual(out.strip(), name)
 
     @unittest.skipUnless(process._scope_available(), "user systemd manager required")
-    def test_a_tool_over_the_cap_is_stopped_and_named(self):
+    def test_a_killed_tool_is_not_falsely_attributed_without_scope_evidence(self):
         runner = ProcessRunner(Sink())
         with self.assertRaises(ProcessFailed) as caught:
             runner.capture(GREEDY, "Could not read the input media.", timeout=30, memory=200 * 1024 ** 2)
-        self.assertIn("memory", caught.exception.message)
+        self.assertNotIn("needed more", caught.exception.message)
 
     def test_reading_a_file_uses_the_small_cap(self):
         seen = []

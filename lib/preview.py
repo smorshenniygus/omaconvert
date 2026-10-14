@@ -8,12 +8,13 @@ Images are scaled directly; videos seek to a representative frame
 from contextlib import contextmanager
 import json
 import os
+import re
 import stat
 from pathlib import Path
 import tempfile
 
-from .color import chain, sdr_filter
-from .errors import OmaConvertError
+from .color import chain, is_hdr, sdr_filter
+from .errors import Cancelled, OmaConvertError
 from .inputs import input_args
 from .probe import MediaInfo, probe_media
 from .process import INSPECT_MEMORY, PROBE_TIMEOUT
@@ -22,7 +23,7 @@ from .process import INSPECT_MEMORY, PROBE_TIMEOUT
 PREVIEW_NAMES = ("src-preview.png", "res-preview.png")
 DEFAULT_EDGE = 320
 MIN_EDGE = 64
-MAX_EDGE = 640
+MAX_EDGE = 320
 
 
 def clamp_edge(value):
@@ -119,9 +120,7 @@ def _private_folder(folder):
 
 
 def forget_preview(path):
-    """Delete one of the window's cached thumbnails (and any half-written
-    temporary next to it). Other names are refused, so this never becomes
-    a general way to delete files."""
+    """Delete one owned slot; active/stale temporaries belong to the job registry."""
     target = Path(path).expanduser()
     if target.name not in PREVIEW_NAMES:
         raise OmaConvertError("Only OmaConvert preview files can be forgotten.", str(target))
@@ -129,9 +128,9 @@ def forget_preview(path):
     if target.is_symlink() or target.is_file():
         target.unlink()
         removed = True
-    if target.parent.is_dir():
-        for stale in target.parent.glob(f".{target.name}.*.tmp.png"):
-            stale.unlink(missing_ok=True)
+    if re.fullmatch(r"p[0-9]+-[a-z0-9-]+", target.parent.name):
+        try: target.parent.rmdir()
+        except OSError: pass
     return {"path": str(target), "removed": removed}
 
 
@@ -147,6 +146,21 @@ def media_info_from_meta(raw):
         raise OmaConvertError("--preview-meta must be the probe event of this file as JSON.", str(exc)) from exc
 
 
+def _sdr_filter(runner, info):
+    """The tone mapping for an HDR file. Asking FFmpeg what it supports is
+    only worth it then; a preview without tone mapping beats no preview."""
+    if not is_hdr(info):
+        return ""
+    if runner.toolbox is None:
+        try:
+            runner.prepare_toolbox()
+        except Cancelled:
+            raise
+        except OmaConvertError:
+            pass
+    return sdr_filter(info, runner.toolbox)
+
+
 def generate_preview(runner, input_path, output_path, max_edge=DEFAULT_EDGE,
                      position=None, info=None, fast=False):
     """Extract one bounded PNG preview. Returns dict with path/width/height/bytes.
@@ -154,6 +168,7 @@ def generate_preview(runner, input_path, output_path, max_edge=DEFAULT_EDGE,
     `info` is the probe of this file when the caller already has it. `fast`
     takes the keyframe at or before `position` instead of decoding up to the
     exact frame: for scrubbing, where the exact frame follows on release."""
+    sweep_preview_sessions()
     max_edge = clamp_edge(max_edge)
     source = Path(input_path).expanduser().absolute()
     if not source.is_file():
@@ -163,15 +178,18 @@ def generate_preview(runner, input_path, output_path, max_edge=DEFAULT_EDGE,
         info = probe_media(source, runner)
     seek = preview_position(info, position)
     fast = bool(fast and seek and info.kind != "image")
+    sdr = _sdr_filter(runner, info)  # before anything is created: this can be cancelled
     output = Path(output_path).expanduser()
     _private_folder(output.parent)
 
     # The thumbnail shows the file's content, so it is owner-only (0600)
     # whatever the source's mode: FFmpeg writes into a file created 0600,
     # which then replaces the old preview in one step.
-    fd, temp_name = tempfile.mkstemp(prefix=f".{output.name}.", suffix=".tmp.png", dir=output.parent)
+    from .cleanup import job_suffix, register, forget
+    fd, temp_name = tempfile.mkstemp(prefix=f".{output.name}.{job_suffix()}", suffix=".tmp.png", dir=output.parent)
     os.close(fd)
     temp = Path(temp_name)
+    register(temp)
 
     def extract(keyframe_only):
         args = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
@@ -180,8 +198,8 @@ def generate_preview(runner, input_path, output_path, max_edge=DEFAULT_EDGE,
         if seek:
             args += ["-ss", f"{seek:.3f}"]
         args += [*input_args(source), "-map", f"0:{info.stream_index}",
-                 "-vf", chain(_scale_filter(max_edge, info), sdr_filter(info)),
-                 "-frames:v", "1", "-c:v", "png", "-f", "image2", "-update", "1", str(temp)]
+                 "-vf", chain(_scale_filter(max_edge, info), sdr),
+                 "-map_metadata", "-1", "-frames:v", "1", "-c:v", "png", "-f", "image2", "-update", "1", str(temp)]
         with _private_umask():
             runner.capture(args, "Could not generate a preview image.", timeout=PROBE_TIMEOUT,
                            memory=INSPECT_MEMORY)
@@ -196,10 +214,12 @@ def generate_preview(runner, input_path, output_path, max_edge=DEFAULT_EDGE,
                 fast = False
         if not fast:
             extract(False)
+        validate_preview(temp)
         temp.chmod(0o600)
         os.replace(temp, output)
     finally:
         temp.unlink(missing_ok=True)
+        forget(temp)
     try:
         size = output.stat().st_size
         width, height = png_size(output)
@@ -215,3 +235,37 @@ def generate_preview(runner, input_path, output_path, max_edge=DEFAULT_EDGE,
         "seek": seek or 0.0,
         "draft": fast,
     }
+
+
+def validate_preview(path):
+    st = Path(path).lstat()
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or st.st_size > 1024 * 1024:
+        raise OmaConvertError("The generated preview is not a safe thumbnail.")
+    width, height = png_size(path)
+    if not (0 < width <= 320 and 0 < height <= 320):
+        raise OmaConvertError("The generated preview exceeds its size limit.")
+    return width, height
+
+
+def sweep_preview_sessions():
+    """Only generated slots of vanished UI processes, never live sessions."""
+    root = cache_dir()
+    try:
+        info = root.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid(): return
+        with os.scandir(root) as entries:
+            for entry in entries:
+                match = re.fullmatch(r"p([0-9]+)-[a-z0-9-]+", entry.name)
+                if not match or not entry.is_dir(follow_symlinks=False): continue
+                if Path("/proc", match.group(1)).exists(): continue
+                folder = Path(entry.path)
+                if folder.lstat().st_uid != os.getuid(): continue
+                for name in PREVIEW_NAMES:
+                    target = folder / name
+                    try:
+                        metadata = target.lstat()
+                        if stat.S_ISREG(metadata.st_mode) and metadata.st_uid == os.getuid(): target.unlink()
+                    except FileNotFoundError: pass
+                try: folder.rmdir()
+                except OSError: pass
+    except FileNotFoundError: pass

@@ -1,9 +1,10 @@
-import ctypes
 import functools
 import os
+from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 
@@ -26,7 +27,7 @@ def encode_memory():
 @functools.cache
 def _scope_available():
     runtime = os.environ.get("XDG_RUNTIME_DIR", "")
-    return bool(shutil.which("systemd-run") and runtime and os.path.exists(os.path.join(runtime, "systemd", "private")))
+    return bool(shutil.which("systemd-run", path=os.defpath) and runtime and os.path.exists(os.path.join(runtime, "systemd", "private")))
 
 
 @functools.cache
@@ -34,7 +35,7 @@ def _scope_options():
     """systemd 254+ expands $VARIABLES in the command it runs; file names
     must reach the tool exactly as they are."""
     try:
-        first = subprocess.run(["systemd-run", "--version"], capture_output=True, text=True, timeout=5).stdout.split()
+        first = subprocess.run([shutil.which("systemd-run", path=os.defpath) or "systemd-run", "--version"], capture_output=True, text=True, timeout=5).stdout.split()
         version = int(first[1]) if len(first) > 1 and first[1].isdigit() else 0
     except (OSError, subprocess.SubprocessError, ValueError):
         version = 0
@@ -47,35 +48,42 @@ def confined(args, memory):
     groups and the parent-death signal still apply. Without a user manager,
     prlimit caps the address space instead: looser, since threads reserve
     address space they never use, hence the larger figure."""
+    from .confinement import cgroup_path, verify_worker
+    here = cgroup_path()
+    if here.name.startswith("omaconvert-job-") and here.parent.name == "omaconvert.slice":
+        verify_worker(here.name, int((here / "memory.max").read_text()))
+        return list(args)
     if _scope_available():
-        return ["systemd-run", "--user", "--scope", "--quiet", "--collect", *_scope_options(),
+        return [shutil.which("systemd-run", path=os.defpath) or "systemd-run", "--user", "--scope", "--quiet", "--collect", *_scope_options(),
                 "-p", f"MemoryMax={memory}", "-p", "MemorySwapMax=0", "--", *args]
-    if shutil.which("prlimit"):
-        return ["prlimit", f"--as={memory * 3}", "--", *args]
-    return list(args)
+    from .confinement import ProtectionUnavailable
+    raise ProtectionUnavailable("No user systemd manager is available.")
 
 
-_PR_SET_PDEATHSIG = 1
-try:
-    _prctl = ctypes.CDLL(None, use_errno=True).prctl
-    _prctl.argtypes = (ctypes.c_int,) + (ctypes.c_ulong,) * 4
-except (OSError, AttributeError):
-    _prctl = None
+# Media tools start through bin/omaconvert-exec, which makes Linux SIGKILL
+# them when the backend dies and then execs the tool.
+#
+# The window kills the backend outright when the shell reloads. Tools run in
+# their own session (for killpg) and FFmpeg ignores SIGPIPE, so they would
+# otherwise keep encoding for minutes into a folder nobody cleans.
+#
+# Linux ties the signal to the thread that started the helper, not to the
+# process: that thread must stay alive until the tool exits. Every launch
+# goes through _run, where the starting thread (the main thread, or a batch
+# worker) also waits for the tool, so the rule holds. Do not start a tool
+# from a short-lived thread and wait for it elsewhere.
+_HELPER = Path(__file__).resolve().parents[1] / "bin" / "omaconvert-exec"
+_HELPER_NOT_STARTED = 127  # the helper's exit status when it could not exec the tool
 
 
-def _die_with_parent(parent):
-    """Runs in the child before exec: SIGKILL it when the backend dies.
+def _through_helper(args):
+    """`args` wrapped to run so that the tool dies with this process.
 
-    The window kills the backend outright when the shell reloads. Tools run
-    in their own session (for killpg) and FFmpeg ignores SIGPIPE, so they
-    would otherwise keep encoding for minutes into a folder nobody cleans.
-    The signal follows the thread that started the tool: the main thread,
-    or a batch worker that waits for its tool before it can exit."""
-    if _prctl is None:
-        return
-    _prctl(_PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
-    if os.getppid() != parent:  # the backend died before prctl took effect
-        os.kill(os.getpid(), signal.SIGKILL)
+    -I -S -B: start fast and import nothing from the user's site or the
+    current directory; the helper is standalone."""
+    if not sys.platform.startswith("linux"):
+        return list(args)
+    return [sys.executable, "-I", "-S", "-B", str(_HELPER), str(os.getpid()), *args]
 
 
 def dependencies():
@@ -101,7 +109,8 @@ _ADVANCING = frozenset({"frame", "out_time_us", "out_time_ms", "out_time", "tota
 
 class _Supervision:
     """What every runner of one backend shares: the running tools, so
-    cancelling stops all of them, and whether the job was cancelled."""
+    cancelling stops all of them, whether the job was cancelled, and FFmpeg's
+    capabilities once the job has asked for them."""
 
     def __init__(self):
         self.lock = threading.RLock()
@@ -110,6 +119,8 @@ class _Supervision:
         self.signal_number = None
         self.terminators = {}
         self.timed_out = set()
+        self.toolbox = None
+        self.toolbox_lock = threading.Lock()  # not `lock`: cancelling must not wait for a question
 
 
 class ProcessRunner:
@@ -132,6 +143,23 @@ class ProcessRunner:
         """A runner reporting to `sink` that is cancelled with this one:
         one per file of a batch converted in parallel."""
         return ProcessRunner(sink, self._shared)
+
+    @property
+    def toolbox(self):
+        """What the installed FFmpeg can do (formats.Toolbox): None until
+        `prepare_toolbox` has run, and without an FFmpeg."""
+        return self._shared.toolbox
+
+    def prepare_toolbox(self):
+        """Ask FFmpeg what it can do, once for the job: every runner made
+        from this one sees the answer. A job calls this before it starts
+        workers, which then only read the immutable Toolbox. Asking runs
+        through this runner, so cancelling the job stops it."""
+        with self._shared.toolbox_lock:
+            if self._shared.toolbox is None:
+                from . import formats
+                self._shared.toolbox = formats.toolbox(self)
+            return self._shared.toolbox
 
     def check_cancelled(self):
         if self.cancelled:
@@ -185,14 +213,11 @@ class ProcessRunner:
         self.check_cancelled()
         try:
             process = subprocess.Popen(
-                confined(args, memory),
+                confined(_through_helper(args), memory),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
-                errors="replace",
                 start_new_session=True,
-                preexec_fn=functools.partial(_die_with_parent, os.getpid()),
             )
         except OSError as exc:
             raise ProcessFailed("Could not start a required media tool.", str(exc)) from exc
@@ -203,13 +228,13 @@ class ProcessRunner:
             self._terminate(process)
         return process
 
-    def _watch(self, process, limit, last_activity):
+    def _watch(self, process, limit, last_activity, drained):
         """Stop `process` once `last_activity()` is older than `limit` seconds."""
         if not limit:
             return None
 
         def watchdog():
-            while process.poll() is None:
+            while not drained.is_set():
                 if time.monotonic() - last_activity() > limit:
                     with self._lock:
                         self._timed_out.add(process)
@@ -235,13 +260,10 @@ class ProcessRunner:
             details = (stderr or "").strip()[-8000:]
             raise ProcessFailed(message + " The media tool stopped responding and was stopped.",
                                 details or "No output before the time limit.")
-        if process.returncode == -signal.SIGKILL:
-            # Nothing of ours sent it (no cancel, no timeout): the memory cap.
-            raise ProcessFailed(
-                message + f" It needed more than the {memory / 1024 ** 3:.0f} GiB of memory OmaConvert allows "
-                "and was stopped.", (stderr or "").strip()[-8000:] or "Stopped at the memory limit.")
         if process.returncode:
             details = (stderr or "").strip()[-8000:]
+            if process.returncode == _HELPER_NOT_STARTED and "omaconvert-exec: cannot start" in details:
+                raise ProcessFailed("Could not start a required media tool.", details)
             lowered = details.lower()
             if "no space left on device" in lowered:
                 message = "Conversion failed because the destination disk is full."
@@ -262,16 +284,33 @@ class ProcessRunner:
         thread = threading.Thread(target=_drain_tail, args=(process.stderr, stderr_tail), daemon=True)
         thread.start()
         activity = [time.monotonic()]
-        self._watch(process, limit, lambda: activity[0])
+        drained = threading.Event()
+        self._watch(process, limit, lambda: activity[0], drained)
+        from .streams import read_bounded, iter_bounded_lines, OutputLimitExceeded
         stdout = None
-        if on_line is None:
-            stdout = process.stdout.read()
-        else:
-            for line in process.stdout:
-                if on_line(line.strip()):
-                    activity[0] = time.monotonic()
+        try:
+            if on_line is None:
+                stdout = read_bounded(process.stdout, 1024 * 1024).decode("utf-8", errors="replace")
+            else:
+                for raw in iter_bounded_lines(process.stdout, 16384):
+                    if on_line(raw.decode("utf-8", errors="replace").strip()):
+                        activity[0] = time.monotonic()
+        except OutputLimitExceeded:
+            self._terminate(process)
+            process.wait()
+            thread.join(timeout=2)
+            process.stdout.close()
+            process.stderr.close()
+            with self._lock:
+                self._shared.active.discard(process)
+                self._timed_out.discard(process)
+                terminator = self._terminators.pop(process, None)
+            if terminator: terminator.join(timeout=2)
+            drained.set()
+            raise
         process.wait()
         thread.join()
+        drained.set()
         process.stdout.close()
         process.stderr.close()
         self._finish(process, stderr_tail.value, message, memory)
@@ -310,12 +349,16 @@ class _TailBuffer:
 
     def __init__(self, limit=8000):
         self.limit = limit
-        self.value = ""
+        self._value = b""
 
     def append(self, chunk):
-        self.value = (self.value + chunk)[-self.limit:]
+        self._value = (self._value + chunk.encode("utf-8"))[-self.limit:]
+
+    @property
+    def value(self):
+        return self._value.decode("utf-8", errors="replace")
 
 
 def _drain_tail(stream, tail):
-    for chunk in iter(lambda: stream.read(4096), ""):
-        tail.append(chunk)
+    for chunk in iter(lambda: stream.read(4096), b""):
+        tail.append(chunk.decode("utf-8", errors="replace"))

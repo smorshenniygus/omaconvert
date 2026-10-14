@@ -15,6 +15,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from lib import formats
 from lib.encoders import _video_shape, encode_video_quick, encode_video_target, parse_ffmpeg_progress
 from lib.backend import _convert_gif, _default_output, convert
 from lib.errors import Cancelled, OmaConvertError
@@ -254,6 +255,8 @@ class ProgressTests(unittest.TestCase):
                 self.events.append({"event": event, **fields})
 
         class RecordingRunner:
+            toolbox = None
+
             def __init__(self):
                 self.sink = RecordingSink()
                 self.ffmpeg_fields = None
@@ -272,6 +275,8 @@ class ProgressTests(unittest.TestCase):
 
     def test_video_encoder_maps_the_stream_selected_by_probe(self):
         class Runner:
+            toolbox = None
+
             class Sink:
                 def emit(self, *_args, **_fields):
                     pass
@@ -487,6 +492,9 @@ class ConversionSafetyTests(unittest.TestCase):
             pass
 
     class Runner:
+        # Prepared, as a job's runner is: these tests convert MP4 with sound.
+        toolbox = formats.Toolbox(frozenset({"libx264", "aac"}), frozenset({"mp4"}), frozenset())
+
         def __init__(self):
             self.sink = ConversionSafetyTests.Sink()
             self.cancelled = False

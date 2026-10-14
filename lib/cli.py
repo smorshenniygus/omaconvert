@@ -1,6 +1,5 @@
 import argparse
 import signal
-import subprocess
 import sys
 from pathlib import Path
 
@@ -87,7 +86,7 @@ def build_parser():
     return parser
 
 
-def _status():
+def _status(runner, capabilities_error=None):
     """Version, dependencies, format capabilities, the Open With entry and
     the hotkey in one event: one process when the window opens instead of
     four. A part that cannot be read is reported with an `error` field."""
@@ -99,11 +98,15 @@ def _status():
         status["error"] = {
             "message": "Required media tools are missing: " + ", ".join(missing) + ". Install FFmpeg.",
             "details": "Not found on PATH: " + ", ".join(missing)}
+    elif capabilities_error is not None:
+        status["capabilities_error"] = capabilities_error
     else:
         try:
-            status["capabilities"] = formats.capabilities(formats.toolbox())
-        except (OSError, subprocess.SubprocessError) as exc:
-            status["capabilities_error"] = str(exc)
+            status["capabilities"] = formats.capabilities(formats.toolbox(runner))
+        except Cancelled:
+            raise
+        except OmaConvertError as exc:
+            status["capabilities_error"] = exc.details or exc.message
     for name, read in (("open_with", launcher.open_with_status), ("hotkey", desktop.hotkey_status)):
         try:
             status[name] = read()
@@ -112,24 +115,31 @@ def _status():
     return status
 
 
-def main(argv=None):
+def operation_for(args):
+    return next((name for name in ("version", "status", "paste", "hotkey", "offer_recording",
+        "open_with", "check", "capabilities", "probe_all", "probe", "forget_preview", "preview")
+        if getattr(args, name)), "convert")
+
+
+def run_worker(argv=None):
     sink = EventSink()
     runner = ProcessRunner(sink)
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda number, _frame, active=runner: active.cancel(number))
     try:
         args = build_parser().parse_args(argv)
-        if args.version:
+        operation = operation_for(args)
+        if operation == "version":
             sink.emit("version", version=__version__)
             return 0
-        if args.status:
-            sink.emit("status", **_status())
+        if operation == "status":
+            sink.emit("status", **_status(runner))
             return 0
-        if args.paste:
+        if operation == "paste":
             from . import desktop
             sink.emit("paste", **desktop.paste())
             return 0
-        if args.hotkey:
+        if operation == "hotkey":
             from . import desktop
             try:
                 state = desktop.hotkey_status() if args.hotkey == "status" else desktop.set_hotkey(args.hotkey == "on")
@@ -137,11 +147,11 @@ def main(argv=None):
                 raise OmaConvertError("Could not change the hotkey.", str(exc))
             sink.emit("hotkey", **state)
             return 0
-        if args.offer_recording:
+        if operation == "offer_recording":
             from . import desktop
             sink.emit("recording-offer", **desktop.offer_recording(args.offer_recording))
             return 0
-        if args.open_with:
+        if operation == "open_with":
             from . import launcher
             try:
                 state = (launcher.open_with_status() if args.open_with == "status"
@@ -157,31 +167,27 @@ def main(argv=None):
             # --check too: the window shows this error rather than a bare exit code.
             raise OmaConvertError("Required media tools are missing: " + ", ".join(missing) + ". Install FFmpeg.",
                                   "Not found on PATH: " + ", ".join(missing))
-        if args.check:
+        if operation == "check":
             return 0
-        if args.capabilities:
-            try:
-                tools = formats.toolbox()
-            except (OSError, subprocess.SubprocessError) as exc:
-                raise OmaConvertError("Could not ask FFmpeg which formats it supports.", str(exc))
-            sink.emit("capabilities", **formats.capabilities(tools))
+        if operation == "capabilities":
+            sink.emit("capabilities", **formats.capabilities(formats.toolbox(runner)))
             return 0
-        if args.probe_all:
+        if operation == "probe_all":
             from .backend import probe_all
             probe_all(runner, args.input)
             return 0
-        if args.probe:
+        if operation == "probe":
             path = Path(args.probe).expanduser().absolute()
             if not path.is_file():
                 raise OmaConvertError("The input file does not exist or is not a regular file.", str(path))
             info = probe_media(path, runner)
             sink.emit("probe", **info.event_fields())
             return 0
-        if args.forget_preview:
+        if operation == "forget_preview":
             for path in args.forget_preview:
                 sink.emit("forgotten", **forget_preview(path))
             return 0
-        if args.preview:
+        if operation == "preview":
             if not args.preview_output:
                 raise OmaConvertError("--preview-output is required with --preview.")
             info = media_info_from_meta(args.preview_meta) if args.preview_meta else None
@@ -227,11 +233,44 @@ def main(argv=None):
         sink.emit("cancelled")
         return 130 if runner.signal_number == signal.SIGINT else 143
     except OmaConvertError as exc:
-        sink.emit("error", message=exc.message, details=exc.details)
+        sink.emit("error", message=exc.message, details=exc.details[:4096], reason=getattr(exc, "reason", "worker-failed"))
         return 2
     except Exception as exc:
         sink.emit("error", message="OmaConvert could not complete the conversion.", details=str(exc))
         return 2
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    try:
+        args = build_parser().parse_args(argv)
+    except OmaConvertError as exc:
+        EventSink().emit("error", message=exc.message, details=exc.details)
+        return 2
+    # Match run_worker's precedence exactly: combined flags cannot use a
+    # lower-priority utility to bypass an earlier media operation.
+    operation = operation_for(args)
+    if operation in {"version", "paste", "hotkey", "offer_recording", "open_with", "check", "forget_preview"}:
+        return run_worker(argv)
+    from .controller import run_controlled
+    if operation == "status":
+        class StatusSink(EventSink):
+            recovered = False
+
+            def emit(self, event, **fields):
+                if event == "error" and fields.get("reason") == "protection-unavailable":
+                    # Desktop settings need no media process. Never query the
+                    # toolbox outside the verified worker, even from its cache.
+                    status = _status(None, capabilities_error=fields.get("message"))
+                    super().emit("status", **status)
+                    self.recovered = True
+                else:
+                    super().emit(event, **fields)
+
+        sink = StatusSink()
+        code = run_controlled(argv, "inspect", sink)
+        return 0 if sink.recovered else code
+    return run_controlled(argv, "convert" if operation == "convert" else "inspect", EventSink())
 
 
 if __name__ == "__main__":

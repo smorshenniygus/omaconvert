@@ -80,12 +80,12 @@ class PreviewTests(unittest.TestCase):
         self.assertIn("a", probe["streams"][0]["pix_fmt"])
 
     def test_edge_is_clamped_independent_of_source(self):
-        self.assertEqual(clamp_edge(9999), 640)
+        self.assertEqual(clamp_edge(9999), 320)
         self.assertEqual(clamp_edge(1), 64)
         self.assertEqual(clamp_edge("oops"), 320)
         output = self.root / "huge-preview.png"
         got = generate_preview(self.runner, self.image, output, max_edge=9999)
-        self.assertLessEqual(max(got["width"], got["height"]), 640)
+        self.assertLessEqual(max(got["width"], got["height"]), 320)
 
     def test_preview_preserves_display_aspect_for_non_square_pixels(self):
         for sar, expected in (("2/1", (320, 120)), ("1/2", (213, 320))):

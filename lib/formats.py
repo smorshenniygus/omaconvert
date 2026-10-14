@@ -6,16 +6,18 @@ this module, directly or through the `--capabilities` JSON event.
 
 Availability is measured, not assumed: a present `ffmpeg` binary does not
 imply libx264/libvpx/libwebp. `ffmpeg -encoders/-muxers/-filters` is read
-once per process (the window asks once per session and keeps the answer).
-Input extensions are only a picker hint; decodability is proven by ffprobe.
+once per job or batch, before any worker starts, through the job's
+ProcessRunner (so cancelling stops it), and handed on as an immutable
+`Toolbox` (see ProcessRunner.toolbox). Input extensions are only a picker
+hint; decodability is proven by ffprobe.
 """
 from dataclasses import dataclass
 import json
 import os
 import re
 import shutil
-import subprocess
 
+from .errors import Cancelled, OmaConvertError
 from .publish import replace_text
 
 
@@ -131,15 +133,11 @@ class Toolbox:
     filters: frozenset
 
 
-def _run(ffmpeg, flag, timeout):
-    completed = subprocess.run([ffmpeg, "-hide_banner", flag], stdin=subprocess.DEVNULL,
-                               capture_output=True, text=True, timeout=timeout)
-    if completed.returncode != 0:
-        raise OSError((completed.stderr or "").strip() or f"ffmpeg {flag} failed")
-    return completed.stdout
+def _run(runner, ffmpeg, flag, timeout):
+    return runner.capture([ffmpeg, "-hide_banner", flag], "FFmpeg could not list what it supports.",
+                          timeout=timeout)
 
 
-_CACHE = {}
 # Asking FFmpeg for its tables costs about 160 ms (three runs); the answer
 # changes only when the executable does. Kept for the last few executables.
 _DISK_ENTRIES = 8
@@ -165,6 +163,25 @@ def _read_disk_cache():
         return {}
 
 
+def _make_private_folders(folder):
+    """Create `folder` and its missing parents, each owner-only. The mode is
+    set per folder: the process umask is shared with every other thread and
+    must not be changed, even for a moment."""
+    missing = []
+    while folder and not os.path.isdir(folder):
+        missing.append(folder)
+        parent = os.path.dirname(folder)
+        if parent == folder:
+            break
+        folder = parent
+    for created in reversed(missing):
+        try:
+            os.mkdir(created, 0o700)
+        except FileExistsError:
+            continue
+        os.chmod(created, 0o700)  # the umask may only have removed bits
+
+
 def _write_disk_cache(key, tools):
     """Best effort: an unwritable cache only costs the next run 160 ms."""
     path = _disk_cache_path()
@@ -173,49 +190,56 @@ def _write_disk_cache(key, tools):
     data[key] = {"encoders": sorted(tools.encoders), "muxers": sorted(tools.muxers),
                  "filters": sorted(tools.filters)}
     data = dict(list(data.items())[-_DISK_ENTRIES:])
-    old = os.umask(0o077)
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        _make_private_folders(os.path.dirname(path))
         replace_text(path, json.dumps(data), 0o600)
     except OSError:
         pass
-    finally:
-        os.umask(old)
 
 
-def toolbox(ffmpeg=None, timeout=20):
-    """What the installed FFmpeg can write. Cached per executable: in this
-    process, and on disk keyed by the executable's path, size and mtime."""
+def _discover(runner, ffmpeg, timeout):
+    """Ask FFmpeg, one run after another, so cancelling the job stops the
+    one in progress and starts no further one."""
+    try:
+        return Toolbox(
+            frozenset(_table(_run(runner, ffmpeg, "-encoders", timeout))),
+            frozenset(_flagged_muxers(_run(runner, ffmpeg, "-muxers", timeout))),
+            frozenset(_table(_run(runner, ffmpeg, "-filters", timeout))),
+        )
+    except Cancelled:
+        raise
+    except OmaConvertError as exc:
+        raise OmaConvertError("Could not ask FFmpeg which formats it supports.",
+                              exc.details or exc.message) from exc
+
+
+def toolbox(runner, ffmpeg=None, timeout=20):
+    """What the installed FFmpeg can write, or None without an FFmpeg.
+
+    Read from the disk cache, keyed by the executable's path, size and mtime;
+    otherwise FFmpeg is asked through `runner` and the answer is cached.
+    Nothing is remembered in this process: a job calls this once before its
+    workers start and passes the immutable result on (ProcessRunner.with_toolbox).
+    Raises Cancelled when the job is cancelled while FFmpeg is asked, and
+    OmaConvertError when it cannot be asked."""
     ffmpeg = ffmpeg or shutil.which("ffmpeg")
     if not ffmpeg:
         return None
-    if ffmpeg not in _CACHE:
-        try:
-            key = _executable_key(ffmpeg)
-        except OSError:
-            key = None
-        stored = _read_disk_cache().get(key) if key else None
-        try:
-            tools = Toolbox(frozenset(stored["encoders"]), frozenset(stored["muxers"]),
-                            frozenset(stored["filters"])) if stored else None
-        except (KeyError, TypeError):
-            tools = None
-        if tools is None:
-            tools = Toolbox(
-                frozenset(_table(_run(ffmpeg, "-encoders", timeout))),
-                frozenset(_flagged_muxers(_run(ffmpeg, "-muxers", timeout))),
-                frozenset(_table(_run(ffmpeg, "-filters", timeout))),
-            )
-            if key:
-                _write_disk_cache(key, tools)
-        _CACHE[ffmpeg] = tools
-    return _CACHE[ffmpeg]
-
-
-def clear_cache():
-    """Forget the tables in this process (the disk cache stays valid: it is
-    keyed by the executable itself)."""
-    _CACHE.clear()
+    try:
+        key = _executable_key(ffmpeg)
+    except OSError:
+        key = None
+    stored = _read_disk_cache().get(key) if key else None
+    try:
+        tools = Toolbox(frozenset(stored["encoders"]), frozenset(stored["muxers"]),
+                        frozenset(stored["filters"])) if stored else None
+    except (KeyError, TypeError):
+        tools = None
+    if tools is None:
+        tools = _discover(runner, ffmpeg, timeout)
+        if key:
+            _write_disk_cache(key, tools)
+    return tools
 
 
 def missing_for(fmt, tools, audio=False, still=False):
