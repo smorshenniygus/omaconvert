@@ -209,7 +209,7 @@ class ProcessRunner:
         self.check_cancelled()
         try:
             process = subprocess.Popen(
-                _through_helper(confined(args, memory)),
+                confined(_through_helper(args), memory),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
