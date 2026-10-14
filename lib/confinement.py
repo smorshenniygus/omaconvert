@@ -224,6 +224,13 @@ class JobScope:
                 self.process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 pass
+            deadline = time.monotonic() + 5
+            while self.path and self.path.exists() and time.monotonic() < deadline:
+                try:
+                    events = dict(line.split() for line in (self.path / 'cgroup.events').read_text().splitlines())
+                    if events.get('populated') == '0': break
+                except OSError: break
+                time.sleep(.02)
             for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
                 if stream:
                     stream.close()

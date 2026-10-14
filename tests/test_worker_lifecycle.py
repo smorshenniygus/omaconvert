@@ -41,3 +41,16 @@ class WorkerLifecycle(unittest.TestCase):
         finally:
             if p.poll() is None:p.kill();p.wait()
             p.stdout.close();p.stderr.close()
+    def test_no_manager_never_starts_tool(self):
+        env=self.stub('print("should never execute")')
+        runtime=self.folder/'runtime';runtime.mkdir(mode=0o700)
+        env.update(XDG_RUNTIME_DIR=str(runtime),DBUS_SESSION_BUS_ADDRESS='unix:path=/nonexistent')
+        p=subprocess.run([sys.executable,str(ROOT/'bin/omaconvert'),'--probe',str(self.source)],env=env,capture_output=True,text=True,timeout=10)
+        events=[json.loads(x) for x in p.stdout.splitlines()]
+        self.assertEqual(events[-1].get('reason'),'protection-unavailable',events)
+        self.assertFalse(self.pidfile.exists())
+    def test_absolute_inspection_deadline(self):
+        code='import sys;sys.path.insert(0,'+repr(str(ROOT))+');from lib import controller;controller.PROBE_TIMEOUT=.3;from lib.cli import main;sys.exit(main())'
+        p=subprocess.run([sys.executable,'-c',code,'--probe',str(self.source)],env=self.stub('time.sleep(30)'),capture_output=True,text=True,timeout=8)
+        events=[json.loads(x) for x in p.stdout.splitlines()]
+        self.assertEqual(events[-1].get('reason'),'timeout',events)

@@ -53,3 +53,20 @@ class BombTests(unittest.TestCase):
         code=self.exercise(['--preview',str(self.bomb),'--preview-output',str(target)])
         if code:self.assertFalse(target.exists())
         elif target.exists():self.assertLessEqual(target.stat().st_size,1024**2)
+
+    def test_qml_selection_recovers_after_bomb(self):
+        import subprocess, shutil
+        root=Path(__file__).resolve().parents[2]
+        wrapper=self.folder/'bounded_cli.py'
+        wrapper.write_text("import sys\nsys.dont_write_bytecode=True\nsys.path.insert(0,"+repr(str(root))+")\nfrom lib import controller\nfrom lib.confinement import JobScope\ncontroller.JobScope=lambda:JobScope(memory=256*1024**2)\nfrom lib.cli import main\nsys.exit(main())\n")
+        harness=(root/'tests/qml/SecurityHarness.qml').read_text().replace('../../services',(root/'services').as_uri())
+        (self.folder/'shell.qml').write_text(harness)
+        env=dict(os.environ,QT_QPA_PLATFORM='offscreen',QT_QPA_PLATFORMTHEME='',QT_QUICK_CONTROLS_STYLE='Basic',
+            HOME=str(self.folder),XDG_CONFIG_HOME=str(self.folder/'config'),XDG_CACHE_HOME=str(self.folder/'cache'),
+            OMACONVERT_TEST_CLI=str(wrapper),OMACONVERT_TEST_BOMB=str(self.bomb),OMACONVERT_TEST_GOOD=str(root/'assets/kv.jpg'))
+        result=subprocess.run(['qs','-p',str(self.folder/'shell.qml'),'--no-color'],env=env,capture_output=True,text=True,timeout=30)
+        output=result.stdout+result.stderr
+        self.assertEqual(result.returncode,0,output)
+        self.assertIn('PASS hostile selection recovered',output)
+        self.assertNotIn('FAIL',output)
+        print(output,flush=True)

@@ -67,3 +67,14 @@ def cleanup_job(unit):
         try:folder.rmdir()
         except OSError:pass
     except FileNotFoundError:pass
+
+def sweep_abandoned():
+    """Next-session recovery; never inspect paths belonging to an active scope."""
+    from .confinement import properties
+    with os.scandir(runtime_dir()) as entries:
+        for entry in entries:
+            if not _PATTERN.fullmatch(entry.name) or not entry.is_dir(follow_symlinks=False):
+                continue
+            state = properties(entry.name).get('ActiveState')
+            if state in ('inactive', 'failed'):
+                cleanup_job(entry.name)

@@ -24,3 +24,10 @@ class CgroupTests(unittest.TestCase):
             observed = scope.observations()
             self.assertNotEqual(process.returncode, 0)
             self.assertTrue(observed['oomKill'] or observed['result'] == 'oom-kill', observed)
+    def test_two_scopes_share_one_aggregate_budget(self):
+        with JobScope(memory=128*1024**2) as first, JobScope(memory=128*1024**2) as second:
+            args=[sys.executable,'-c','import sys;sys.stdin.read()']
+            first.start(args,'inspect');second.start(args,'inspect')
+            self.assertEqual(first.path.parent,second.path.parent)
+            self.assertLessEqual(int((first.path.parent/'memory.max').read_text()),first.budget.total_bytes)
+            self.assertNotEqual(first.path,second.path)

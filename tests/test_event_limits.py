@@ -15,3 +15,13 @@ class EventLimits(unittest.TestCase):
         self.assertTrue(events[-1]['resultsChunked'])
         actual=[p for e in events[:-1] for p in e['paths']]
         self.assertEqual(actual,paths)
+    def test_progress_flood_is_coalesced_but_completion_survives(self):
+        from unittest.mock import patch
+        stream=io.StringIO();sink=EventSink(stream)
+        with patch('time.monotonic',return_value=10):
+            for _ in range(1000):sink.emit('encoding',progress=0.5)
+            sink.emit('encoding',progress=1)
+            sink.emit('complete',path='/tmp/result')
+        events=[json.loads(x) for x in stream.getvalue().splitlines()]
+        self.assertLessEqual(len(events),3)
+        self.assertEqual(events[-1]['event'],'complete')

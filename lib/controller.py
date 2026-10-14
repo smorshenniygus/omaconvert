@@ -53,6 +53,8 @@ def run_controlled(argv, profile, sink):
                         sink.emit('queued', message='Waiting for another conversion to finish.')
                         announced = True
                     time.sleep(.05)
+        from .cleanup import sweep_abandoned
+        sweep_abandoned()
         scope = JobScope()
         if profile == 'convert': scope.memory = scope.budget.total_bytes // os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PAGE_SIZE')
         worker = Path(__file__).resolve().parents[1]/'bin'/'omaconvert-worker'

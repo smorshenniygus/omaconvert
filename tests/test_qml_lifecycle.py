@@ -146,7 +146,7 @@ class PreviewCache(unittest.TestCase):
                             '-i', 'testsrc2=s=320x200', '-frames:v', '1', str(image)], check=True)
             image.chmod(0o600)
         environment = dict(os.environ, QT_QPA_PLATFORM='offscreen', QT_QPA_PLATFORMTHEME='',
-                           XDG_RUNTIME_DIR=str(folder / 'runtime'), XDG_CACHE_HOME=str(folder / 'cache'),
+                           XDG_RUNTIME_DIR=os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}'), XDG_CACHE_HOME=str(folder / 'cache'),
                            OMACONVERT_TEST_CLI=str(ROOT / 'bin' / 'omaconvert'),
                            OMACONVERT_TEST_INPUT=str(image), OMACONVERT_TEST_CLEAR='1' if clear else '0')
         environment.pop('WAYLAND_DISPLAY', None)

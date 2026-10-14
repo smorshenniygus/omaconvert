@@ -36,7 +36,7 @@ if result.returncode == 0 and '--preview' in args:
 sys.exit(result.returncode)
 """)
             env = dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_QPA_PLATFORMTHEME="",
-                       XDG_RUNTIME_DIR=str(folder / "runtime"), XDG_CACHE_HOME=str(folder / "cache"),
+                       XDG_RUNTIME_DIR=os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"), XDG_CACHE_HOME=str(folder / "cache"),
                        OMACONVERT_TEST_CLI=str(proxy), OMACONVERT_REAL_CLI=str(ROOT / "bin/omaconvert"),
                        OMACONVERT_TEST_INPUT=str(video), OMACONVERT_TEST_FIRST=first)
             env.pop("WAYLAND_DISPLAY", None)

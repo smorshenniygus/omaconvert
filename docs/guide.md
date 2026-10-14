@@ -99,3 +99,12 @@ This runs the Python tests, the Qt Quick tests, `omarchy plugin validate` on the
 Where things live: `lib/` is the backend and its JSON CLI. `services/Session.qml` holds what the window does (recipes, the command line and fields, the current screen, starting a job). `ConvertService.qml` and `PreviewService.qml` run the CLI. `OmaConvert.qml` is the window: it wires these to one component per section in `components/screens/`, built from `components/ui/` and styled by a single `Theme` object.
 
 After a change to the installed plugin, run `omarchy plugin update io.github.smorshenniygus.omaconvert --yes`, then `omarchy restart shell`. The shell caches plugin QML, and the window shows a warning while the loaded interface is older than the backend.
+
+
+### Media worker protection
+
+Opening media requires a running user systemd manager, `systemd-run`, `systemctl`, `busctl`, and the cgroup v2 memory controller. OmaConvert verifies limits before decoding; it does not fall back to an unbounded process. Help, version and `--check` remain available without the manager.
+
+Python and its media tools share a per-job budget inside a transient application slice. The aggregate budget is 60% of effective memory capacity with at least 1 GiB reserved. Inspection uses at most 2 GiB, no swap, and a 120-second absolute deadline. Conversions queue across instances; images within a batch can still run in parallel under the shared limit. A memory-limit error does not overwrite an existing output or publish the current partial file.
+
+The boundary limits resource consumption. It is not yet a filesystem/network sandbox. Resource tests, including a generated PNG metadata bomb, are opt-in: `bash scripts/check-security.sh`. They first prove cgroup enforcement and refuse to run the bomb otherwise. No hostile fixture is committed to the repository.
